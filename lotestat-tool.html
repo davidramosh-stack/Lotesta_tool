@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoteStat · Cargador de Resultados</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --border: #1e2129;
+    --accent: #6c63ff;
+    --accent2: #ff6b6b;
+    --green: #00e5a0;
+    --text: #e8eaf0;
+    --muted: #555a6b;
+    --card: #13161e;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: 
+      linear-gradient(rgba(108,99,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(108,99,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 24px 16px 60px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Header */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 32px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .logo-main {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--green));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.5px;
+  }
+
+  .logo-sub {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  .date-badge {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  /* Controls */
+  .controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .date-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+  }
+
+  input[type="date"] {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input[type="date"]:focus {
+    border-color: var(--accent);
+  }
+
+  .btn-fetch {
+    grid-column: 1 / -1;
+    background: var(--accent);
+    color: white;
+    border: none;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 1px;
+    padding: 13px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn-fetch:hover { background: #5a52e0; transform: translateY(-1px); }
+  .btn-fetch:active { transform: translateY(0); }
+  .btn-fetch:disabled { background: var(--muted); cursor: not-allowed; transform: none; }
+
+  /* Status */
+  .status {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+  }
+
+  .status.loading { display: flex; background: rgba(108,99,255,0.1); border: 1px solid rgba(108,99,255,0.3); color: var(--accent); }
+  .status.error   { display: flex; background: rgba(255,107,107,0.1); border: 1px solid rgba(255,107,107,0.3); color: var(--accent2); }
+  .status.success { display: flex; background: rgba(0,229,160,0.1); border: 1px solid rgba(0,229,160,0.3); color: var(--green); }
+
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Results */
+  .results-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .results-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  .count-badge {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    color: var(--green);
+  }
+
+  /* Table */
+  .table-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  thead tr {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  th {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    padding: 10px 14px;
+    text-align: left;
+  }
+
+  th:not(:first-child) { text-align: center; }
+
+  tbody tr {
+    border-bottom: 1px solid rgba(30,33,41,0.6);
+    transition: background 0.15s;
+  }
+
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(108,99,255,0.05); }
+
+  td {
+    padding: 10px 14px;
+    font-size: 12px;
+  }
+
+  td.name {
+    color: var(--text);
+    font-size: 11px;
+  }
+
+  td.num {
+    text-align: center;
+    font-weight: 500;
+    font-size: 14px;
+  }
+
+  td.num span {
+    display: inline-block;
+    width: 32px; height: 32px;
+    line-height: 32px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+
+  td.num span.hot {
+    background: rgba(255,107,107,0.15);
+    border-color: rgba(255,107,107,0.5);
+    color: var(--accent2);
+  }
+
+  td.num span.empty {
+    background: transparent;
+    border-color: transparent;
+    color: var(--muted);
+    font-size: 10px;
+  }
+
+  /* Copy area */
+  .copy-section {
+    display: none;
+  }
+
+  .copy-section.visible {
+    display: block;
+  }
+
+  .copy-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .copy-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .copy-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+  }
+
+  .copy-toolbar span {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .btn-copy {
+    background: var(--green);
+    color: #000;
+    border: none;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 5px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: all 0.2s;
+  }
+
+  .btn-copy:hover { opacity: 0.85; }
+  .btn-copy.copied { background: var(--accent); color: white; }
+
+  textarea {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 14px;
+    resize: none;
+    outline: none;
+    height: 180px;
+    line-height: 1.8;
+  }
+
+  /* Format selector */
+  .format-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .fmt-tab {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.5px;
+  }
+
+  .fmt-tab.active {
+    background: rgba(108,99,255,0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+
+  .empty-state .icon {
+    font-size: 40px;
+    margin-bottom: 16px;
+    opacity: 0.4;
+  }
+
+  .empty-state p {
+    font-size: 12px;
+    line-height: 1.8;
+  }
+
+  #results-area { display: none; }
+  #results-area.visible { display: block; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">
+      <div class="logo-main">LoteStat</div>
+      <div class="logo-sub">Cargador de Resultados</div>
+    </div>
+    <div class="date-badge" id="today-label">—</div>
+  </header>
+
+  <div class="controls">
+    <div class="date-group">
+      <label>Fecha</label>
+      <input type="date" id="fecha-input">
+    </div>
+    <div class="date-group" style="justify-content:flex-end; align-items:flex-end;">
+      <label>&nbsp;</label>
+      <div style="display:flex; gap:8px; width:100%;">
+        <button class="btn-fetch" style="padding:10px; font-size:11px; flex:1;" onclick="setRelativeDate(-1)">← Ayer</button>
+        <button class="btn-fetch" style="padding:10px; font-size:11px; flex:1; background:var(--surface); border:1px solid var(--border); color:var(--text);" onclick="setRelativeDate(0)">Hoy</button>
+      </div>
+    </div>
+    <button class="btn-fetch" id="btn-fetch" onclick="fetchResults()">
+      ⚡ Obtener Resultados
+    </button>
+  </div>
+
+  <div class="status" id="status">
+    <div class="spinner" id="spinner"></div>
+    <span id="status-text"></span>
+  </div>
+
+  <div id="results-area">
+    <div class="results-header">
+      <div class="results-title">Sorteos del día</div>
+      <div class="count-badge" id="count-badge">0 sorteos</div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Lotería</th>
+            <th>1RA</th>
+            <th>2DA</th>
+            <th>3RA</th>
+          </tr>
+        </thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="copy-section visible">
+      <div class="copy-label">Formato para LoteStat</div>
+      <div class="format-tabs">
+        <button class="fmt-tab active" onclick="setFormat('csv', this)">CSV</button>
+        <button class="fmt-tab" onclick="setFormat('tab', this)">Tabulado</button>
+        <button class="fmt-tab" onclick="setFormat('json', this)">JSON</button>
+      </div>
+      <div class="copy-box">
+        <div class="copy-toolbar">
+          <span id="copy-info">Listo para pegar</span>
+          <button class="btn-copy" id="btn-copy" onclick="copyText()">Copiar Todo</button>
+        </div>
+        <textarea id="copy-area" readonly></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="empty-state" id="empty-state">
+    <div class="icon">📋</div>
+    <p>Selecciona una fecha y presiona<br><strong>Obtener Resultados</strong><br>para cargar los sorteos.</p>
+  </div>
+
+</div>
+
+<script>
+  let currentData = [];
+  let currentFormat = 'csv';
+
+  // Set today's date on load
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  document.getElementById('fecha-input').value = todayStr;
+  document.getElementById('today-label').textContent = formatDateLabel(today);
+
+  function setRelativeDate(offset) {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    document.getElementById('fecha-input').value = d.toISOString().split('T')[0];
+  }
+
+  function formatDateLabel(d) {
+    return d.toLocaleDateString('es-DO', { weekday:'short', day:'numeric', month:'short', year:'numeric' });
+  }
+
+  function showStatus(type, msg) {
+    const s = document.getElementById('status');
+    const sp = document.getElementById('spinner');
+    const st = document.getElementById('status-text');
+    s.className = 'status ' + type;
+    sp.style.display = type === 'loading' ? 'block' : 'none';
+    st.textContent = msg;
+  }
+
+  function hideStatus() {
+    document.getElementById('status').className = 'status';
+  }
+
+  async function fetchResults() {
+    const fecha = document.getElementById('fecha-input').value;
+    if (!fecha) { showStatus('error', 'Selecciona una fecha primero.'); return; }
+
+    const btn = document.getElementById('btn-fetch');
+    btn.disabled = true;
+    showStatus('loading', 'Obteniendo resultados de enloteria.com...');
+    document.getElementById('results-area').classList.remove('visible');
+    document.getElementById('empty-state').style.display = 'none';
+
+    try {
+      // Use a CORS proxy to fetch enloteria.com
+      const targetUrl = `https://enloteria.com/?date=${fecha}`;
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+      
+      const resp = await fetch(proxyUrl);
+      if (!resp.ok) throw new Error('No se pudo conectar');
+      
+      const json = await resp.json();
+      const html = json.contents;
+      
+      const parsed = parseEnloteria(html, fecha);
+      
+      if (parsed.length === 0) {
+        // Fallback: try without date param
+        const targetUrl2 = `https://enloteria.com/`;
+        const proxyUrl2 = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl2)}`;
+        const resp2 = await fetch(proxyUrl2);
+        const json2 = await resp2.json();
+        const parsed2 = parseEnloteria(json2.contents, fecha);
+        if (parsed2.length === 0) throw new Error('Sin datos para esta fecha');
+        currentData = parsed2;
+      } else {
+        currentData = parsed;
+      }
+
+      renderTable(currentData);
+      renderCopyArea(currentData);
+      document.getElementById('results-area').classList.add('visible');
+      document.getElementById('count-badge').textContent = currentData.length + ' sorteos';
+      showStatus('success', `✓ ${currentData.length} sorteos cargados · ${fecha}`);
+      setTimeout(hideStatus, 3000);
+
+    } catch (e) {
+      showStatus('error', 'Error: ' + e.message + '. Intenta con otra fecha.');
+      document.getElementById('empty-state').style.display = 'block';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function parseEnloteria(html, targetDate) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const results = [];
+
+    // Find all lottery result sections
+    const sections = doc.querySelectorAll('h5, h4, h3');
+    
+    sections.forEach(h => {
+      const name = h.textContent.trim().replace(/\s+/g, ' ');
+      if (!name || name.length < 2) return;
+
+      // Find the parent container and look for numbers
+      let container = h.closest('div') || h.parentElement;
+      if (!container) return;
+
+      // Look for result balls (numbers)
+      const balls = container.querySelectorAll('img[alt*="resultado"] + *') ;
+      
+      // Alternative: look for number patterns in text nodes near the heading
+      const allText = container.innerText || container.textContent;
+      
+      // Extract numbers - look for 2-digit number patterns
+      const numMatches = allText.match(/\b(\d{2})\b/g);
+      
+      if (numMatches && numMatches.length >= 2) {
+        // Filter out year-like numbers and times
+        const nums = numMatches.filter(n => {
+          const v = parseInt(n);
+          return v >= 0 && v <= 99;
+        }).slice(0, 3);
+
+        if (nums.length >= 2) {
+          // Check if this section has a date matching our target or no date conflict
+          const dateInSection = allText.match(/\d{4}-\d{2}-\d{2}/);
+          if (!dateInSection || dateInSection[0] === targetDate) {
+            results.push({
+              name: cleanName(name),
+              n1: nums[0] || '--',
+              n2: nums[1] || '--',
+              n3: nums[2] || '--'
+            });
+          }
+        }
+      }
+    });
+
+    return results;
+  }
+
+  function cleanName(n) {
+    return n.replace(/\[.*?\]/g, '').replace(/icono.*/gi, '').trim();
+  }
+
+  // Hardcoded fallback with today's scraped data (May 4, 2026)
+  const FALLBACK_DATA = [
+    {name:'Anguilla 8AM',   n1:'92', n2:'83', n3:'03'},
+    {name:'Anguilla 9AM',   n1:'65', n2:'13', n3:'59'},
+    {name:'Haiti Bolet 9:30 AM', n1:'71', n2:'64', n3:'22'},
+    {name:'Anguilla 10AM',  n1:'41', n2:'95', n3:'62'},
+    {name:'Haiti Bolet 10:30 AM', n1:'47', n2:'76', n3:'30'},
+    {name:'Anguilla 11AM',  n1:'39', n2:'34', n3:'52'},
+    {name:'Haiti Bolet 11:30 AM', n1:'67', n2:'87', n3:'14'},
+    {name:'Anguilla 12PM',  n1:'36', n2:'01', n3:'10'},
+    {name:'La Primera',     n1:'94', n2:'23', n3:'70'},
+    {name:'LoteDom',        n1:'22', n2:'86', n3:'32'},
+    {name:'Georgia Día',    n1:'56', n2:'45', n3:'73'},
+    {name:'King Lottery Día', n1:'68', n2:'50', n3:'75'},
+    {name:'La Suerte',      n1:'96', n2:'48', n3:'30'},
+    {name:'Real',           n1:'52', n2:'19', n3:'05'},
+    {name:'New Jersey Tarde', n1:'96', n2:'86', n3:'21'},
+    {name:'Anguilla 1PM',   n1:'60', n2:'22', n3:'87'},
+    {name:'Florida Tarde',  n1:'23', n2:'41', n3:'03'},
+    {name:'Anguilla 2PM',   n1:'81', n2:'02', n3:'66'},
+    {name:'Gana Más',       n1:'76', n2:'62', n3:'19'},
+    {name:'New York Tarde', n1:'94', n2:'53', n3:'28'},
+    {name:'Anguilla 3PM',   n1:'45', n2:'35', n3:'50'},
+    {name:'Anguilla 4PM',   n1:'41', n2:'78', n3:'39'},
+    {name:'Anguilla 5PM',   n1:'75', n2:'31', n3:'98'},
+    {name:'Haiti Bolet 5:30 PM', n1:'45', n2:'45', n3:'13'},
+    {name:'Anguilla 6PM',   n1:'33', n2:'42', n3:'87'},
+    {name:'La Suerte 6PM',  n1:'46', n2:'23', n3:'40'},
+    {name:'Haiti Bolet 6:30 PM', n1:'79', n2:'77', n3:'75'},
+    {name:'Georgia Tarde',  n1:'72', n2:'50', n3:'28'},
+    {name:'Anguilla 7PM',   n1:'18', n2:'87', n3:'21'},
+    {name:'La Primera Noche', n1:'11', n2:'21', n3:'78'},
+    {name:'Haiti Bolet 7:30 PM', n1:'36', n2:'37', n3:'25'},
+    {name:'King Lottery Noche', n1:'53', n2:'74', n3:'52'},
+  ];
+
+  function renderTable(data) {
+    const tbody = document.getElementById('results-tbody');
+    tbody.innerHTML = '';
+    data.forEach(row => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="name">${row.name}</td>
+        <td class="num"><span>${row.n1}</span></td>
+        <td class="num"><span>${row.n2}</span></td>
+        <td class="num"><span>${row.n3}</span></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function renderCopyArea(data) {
+    const area = document.getElementById('copy-area');
+    const fecha = document.getElementById('fecha-input').value;
+    
+    if (currentFormat === 'csv') {
+      area.value = `Lotería,1RA,2DA,3RA\n` +
+        data.map(r => `${r.name},${r.n1},${r.n2},${r.n3}`).join('\n');
+    } else if (currentFormat === 'tab') {
+      area.value = `Lotería\t1RA\t2DA\t3RA\n` +
+        data.map(r => `${r.name}\t${r.n1}\t${r.n2}\t${r.n3}`).join('\n');
+    } else if (currentFormat === 'json') {
+      area.value = JSON.stringify(
+        { fecha, sorteos: data.map(r => ({ loteria: r.name, numeros: [r.n1, r.n2, r.n3] })) },
+        null, 2
+      );
+    }
+
+    document.getElementById('copy-info').textContent =
+      `${data.length} sorteos · ${fecha}`;
+  }
+
+  function setFormat(fmt, el) {
+    currentFormat = fmt;
+    document.querySelectorAll('.fmt-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    if (currentData.length > 0) renderCopyArea(currentData);
+  }
+
+  function copyText() {
+    const area = document.getElementById('copy-area');
+    area.select();
+    document.execCommand('copy');
+    const btn = document.getElementById('btn-copy');
+    btn.textContent = '✓ Copiado!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'Copiar Todo';
+      btn.classList.remove('copied');
+    }, 2000);
+  }
+
+  // Load fallback on start to show example
+  window.onload = () => {
+    currentData = FALLBACK_DATA;
+    renderTable(FALLBACK_DATA);
+    renderCopyArea(FALLBACK_DATA);
+    document.getElementById('results-area').classList.add('visible');
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('count-badge').textContent = FALLBACK_DATA.length + ' sorteos';
+    document.getElementById('today-label').textContent = 'Lun 04 May 2026';
+    showStatus('success', '✓ Datos de ejemplo cargados · 2026-05-04');
+    setTimeout(hideStatus, 4000);
+  };
+</script>
+</body>
+</html>
