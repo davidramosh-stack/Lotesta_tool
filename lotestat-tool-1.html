@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoteStat · Cargador de Resultados</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --border: #1e2129;
+    --accent: #6c63ff;
+    --accent2: #ff6b6b;
+    --green: #00e5a0;
+    --text: #e8eaf0;
+    --muted: #555a6b;
+    --card: #13161e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(108,99,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(108,99,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 24px 16px 60px;
+    position: relative;
+    z-index: 1;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo-main {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--green));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .logo-sub { font-size: 10px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-top: 2px; }
+  .date-badge { background: var(--surface); border: 1px solid var(--border); padding: 5px 12px; border-radius: 20px; font-size: 11px; color: var(--muted); }
+  .controls { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  input[type="date"] {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    font-family: 'DM Mono', monospace; font-size: 13px; padding: 10px 14px;
+    border-radius: 8px; flex: 1; min-width: 140px; outline: none; transition: border-color 0.2s;
+  }
+  input[type="date"]:focus { border-color: var(--accent); }
+  .btn {
+    background: var(--surface); border: 1px solid var(--border); color: var(--muted);
+    font-family: 'DM Mono', monospace; font-size: 12px; padding: 10px 14px;
+    border-radius: 8px; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--text); }
+  .btn-primary {
+    background: var(--accent); border: none; color: white;
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px;
+    letter-spacing: 0.5px; padding: 10px 20px; border-radius: 8px;
+    cursor: pointer; transition: all 0.2s; white-space: nowrap;
+  }
+  .btn-primary:hover { background: #5a52e0; }
+  .btn-primary:disabled { background: var(--muted); cursor: not-allowed; }
+  .status { display: none; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 8px; margin-bottom: 18px; font-size: 12px; }
+  .status.loading { display: flex; background: rgba(108,99,255,0.1); border: 1px solid rgba(108,99,255,0.3); color: var(--accent); }
+  .status.error   { display: flex; background: rgba(255,107,107,0.1); border: 1px solid rgba(255,107,107,0.3); color: var(--accent2); }
+  .status.success { display: flex; background: rgba(0,229,160,0.1); border: 1px solid rgba(0,229,160,0.3); color: var(--green); }
+  .spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .results-title { font-family: 'Syne', sans-serif; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; }
+  .count-badge { background: var(--surface); border: 1px solid var(--border); padding: 3px 10px; border-radius: 12px; font-size: 11px; color: var(--green); }
+  .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead tr { background: var(--surface); border-bottom: 1px solid var(--border); }
+  th { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); padding: 10px 14px; text-align: left; }
+  th:not(:first-child) { text-align: center; }
+  tbody tr { border-bottom: 1px solid rgba(30,33,41,0.6); transition: background 0.15s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(108,99,255,0.05); }
+  td { padding: 9px 14px; font-size: 12px; }
+  td.name { color: var(--text); font-size: 11px; }
+  td.num { text-align: center; }
+  td.num span { display: inline-block; width: 30px; height: 30px; line-height: 30px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); font-size: 13px; font-weight: 500; }
+  .copy-label { font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); margin-bottom: 8px; }
+  .format-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+  .fmt-tab { background: var(--surface); border: 1px solid var(--border); color: var(--muted); font-family: 'DM Mono', monospace; font-size: 11px; padding: 5px 14px; border-radius: 6px; cursor: pointer; transition: all 0.2s; }
+  .fmt-tab.active { background: rgba(108,99,255,0.15); border-color: var(--accent); color: var(--accent); }
+  .copy-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .copy-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .copy-toolbar span { font-size: 11px; color: var(--muted); }
+  .btn-copy { background: var(--green); color: #000; border: none; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 11px; padding: 5px 14px; border-radius: 6px; cursor: pointer; transition: all 0.2s; }
+  .btn-copy:hover { opacity: 0.85; }
+  .btn-copy.copied { background: var(--accent); color: white; }
+  textarea { width: 100%; background: transparent; border: none; color: var(--muted); font-family: 'DM Mono', monospace; font-size: 11px; padding: 14px; resize: none; outline: none; height: 160px; line-height: 1.8; }
+  #results-area { display: none; }
+  #results-area.visible { display: block; }
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 12px; line-height: 2; }
+  .empty-icon { font-size: 36px; margin-bottom: 12px; opacity: 0.4; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <div class="logo-main">LoteStat</div>
+      <div class="logo-sub">Cargador · enloteria.com</div>
+    </div>
+    <div class="date-badge" id="today-label">—</div>
+  </header>
+
+  <div class="controls">
+    <input type="date" id="fecha-input">
+    <button class="btn" onclick="setDay(-1)">← Ayer</button>
+    <button class="btn" onclick="setDay(0)">Hoy</button>
+    <button class="btn-primary" id="btn-fetch" onclick="fetchResults()">⚡ Obtener</button>
+  </div>
+
+  <div class="status" id="status">
+    <div class="spinner" id="spinner"></div>
+    <span id="status-text"></span>
+  </div>
+
+  <div id="results-area">
+    <div class="results-header">
+      <div class="results-title">Sorteos del día</div>
+      <div class="count-badge" id="count-badge">—</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Lotería</th><th>1RA</th><th>2DA</th><th>3RA</th></tr></thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
+    </div>
+    <div class="copy-label">Formato para LoteStat</div>
+    <div class="format-tabs">
+      <button class="fmt-tab active" onclick="setFormat('csv',this)">CSV</button>
+      <button class="fmt-tab" onclick="setFormat('tab',this)">Tabulado</button>
+      <button class="fmt-tab" onclick="setFormat('json',this)">JSON</button>
+    </div>
+    <div class="copy-box">
+      <div class="copy-toolbar">
+        <span id="copy-info">—</span>
+        <button class="btn-copy" id="btn-copy" onclick="copyText()">Copiar Todo</button>
+      </div>
+      <textarea id="copy-area" readonly></textarea>
+    </div>
+  </div>
+
+  <div class="empty-state" id="empty-state">
+    <div class="empty-icon">📋</div>
+    Selecciona una fecha y presiona<br>
+    <strong>⚡ Obtener</strong> para cargar los sorteos.
+  </div>
+</div>
+
+<script>
+  let currentData = [];
+  let currentFormat = 'csv';
+
+  const todayDate = new Date();
+  document.getElementById('fecha-input').value = todayDate.toISOString().split('T')[0];
+  document.getElementById('today-label').textContent =
+    todayDate.toLocaleDateString('es-DO', {weekday:'short', day:'numeric', month:'short', year:'numeric'});
+
+  function setDay(offset) {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    document.getElementById('fecha-input').value = d.toISOString().split('T')[0];
+  }
+
+  function showStatus(type, msg) {
+    const s = document.getElementById('status');
+    document.getElementById('spinner').style.display = type === 'loading' ? 'block' : 'none';
+    document.getElementById('status-text').textContent = msg;
+    s.className = 'status ' + type;
+  }
+  function hideStatus() { document.getElementById('status').className = 'status'; }
+
+  async function fetchResults() {
+    const fecha = document.getElementById('fecha-input').value;
+    if (!fecha) { showStatus('error', 'Selecciona una fecha.'); return; }
+
+    const btn = document.getElementById('btn-fetch');
+    btn.disabled = true;
+    document.getElementById('results-area').classList.remove('visible');
+    document.getElementById('empty-state').style.display = 'none';
+    showStatus('loading', 'Buscando resultados en enloteria.com…');
+
+    try {
+      const prompt = `Busca en enloteria.com los resultados de loterías dominicanas del día ${fecha}.
+Devuelve SOLO un array JSON, sin texto extra, sin markdown, sin explicación. Formato exacto:
+[{"name":"Anguilla 8AM","n1":"47","n2":"35","n3":"36"},{"name":"Haiti Bolet 9:30 AM","n1":"59","n2":"72","n3":"19"}]
+Reglas: incluye todos los sorteos con resultados publicados, números siempre de 2 dígitos (01, 08, etc), responde SOLO el array JSON.`;
+
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error?.message || `HTTP ${resp.status}`);
+      }
+
+      const apiData = await resp.json();
+
+      // Find text content blocks
+      const texts = (apiData.content || [])
+        .filter(b => b.type === 'text')
+        .map(b => b.text)
+        .join('');
+
+      // Extract JSON array
+      const match = texts.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+      if (!match) throw new Error('No se pudo extraer datos. Intenta otra fecha.');
+
+      const parsed = JSON.parse(match[0]);
+      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Sin resultados para esta fecha.');
+
+      currentData = parsed;
+      renderTable(currentData);
+      renderCopyArea(currentData);
+      document.getElementById('results-area').classList.add('visible');
+      document.getElementById('count-badge').textContent = currentData.length + ' sorteos';
+      showStatus('success', `✓ ${currentData.length} sorteos · ${fecha}`);
+      setTimeout(hideStatus, 3500);
+
+    } catch (e) {
+      showStatus('error', 'Error: ' + e.message);
+      document.getElementById('empty-state').style.display = 'block';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderTable(data) {
+    const tbody = document.getElementById('results-tbody');
+    tbody.innerHTML = '';
+    data.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="name">${r.name}</td>
+        <td class="num"><span>${r.n1 || '--'}</span></td>
+        <td class="num"><span>${r.n2 || '--'}</span></td>
+        <td class="num"><span>${r.n3 || '--'}</span></td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function renderCopyArea(data) {
+    const fecha = document.getElementById('fecha-input').value;
+    let text = '';
+    if (currentFormat === 'csv') {
+      text = 'Lotería,1RA,2DA,3RA\n' + data.map(r => `${r.name},${r.n1},${r.n2},${r.n3}`).join('\n');
+    } else if (currentFormat === 'tab') {
+      text = 'Lotería\t1RA\t2DA\t3RA\n' + data.map(r => `${r.name}\t${r.n1}\t${r.n2}\t${r.n3}`).join('\n');
+    } else {
+      text = JSON.stringify({ fecha, sorteos: data.map(r => ({ loteria: r.name, numeros: [r.n1, r.n2, r.n3] })) }, null, 2);
+    }
+    document.getElementById('copy-area').value = text;
+    document.getElementById('copy-info').textContent = `${data.length} sorteos · ${fecha}`;
+  }
+
+  function setFormat(fmt, el) {
+    currentFormat = fmt;
+    document.querySelectorAll('.fmt-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    if (currentData.length > 0) renderCopyArea(currentData);
+  }
+
+  function copyText() {
+    const area = document.getElementById('copy-area');
+    area.select();
+    navigator.clipboard.writeText(area.value).catch(() => document.execCommand('copy'));
+    const btn = document.getElementById('btn-copy');
+    btn.textContent = '✓ Copiado!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copiar Todo'; btn.classList.remove('copied'); }, 2000);
+  }
+</script>
+</body>
+</html>
