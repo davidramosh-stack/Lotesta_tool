@@ -1,0 +1,1550 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anguila Trends · LoteStat Predictor</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --border: #1e2129;
+    --accent: #6c63ff;
+    --accent2: #ff6b6b;
+    --green: #00e5a0;
+    --orange: #ffb347;
+    --blue: #4fc3f7;
+    --purple: #ab47bc;
+    --text: #e8eaf0;
+    --muted: #555a6b;
+    --card: #13161e;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(108,99,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(108,99,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px 16px 80px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .logo { display: flex; flex-direction: column; }
+
+  .logo-main {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--green));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.5px;
+  }
+
+  .logo-sub {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  .header-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .badge {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .badge.live {
+    border-color: rgba(0,229,160,0.4);
+    color: var(--green);
+    background: rgba(0,229,160,0.08);
+  }
+
+  /* ── Controls ── */
+  .controls-panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+
+  .controls-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+    margin-bottom: 16px;
+  }
+
+  .controls-row:last-child { margin-bottom: 0; }
+
+  .ctrl-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 140px;
+  }
+
+  label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+  }
+
+  select, input[type="number"], input[type="date"] {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+    -webkit-appearance: none;
+  }
+
+  select:focus, input:focus { border-color: var(--accent); }
+
+  select option { background: var(--surface); }
+
+  /* Pill toggle for days */
+  .pill-group {
+    display: flex;
+    gap: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+  }
+
+  .pill {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .pill.active {
+    background: var(--accent);
+    color: white;
+  }
+
+  .pill:hover:not(.active) { color: var(--text); }
+
+  .btn-analyze {
+    background: linear-gradient(135deg, var(--accent), #4a42cc);
+    color: white;
+    border: none;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 1px;
+    padding: 11px 28px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .btn-analyze:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(108,99,255,0.4); }
+  .btn-analyze:active { transform: translateY(0); }
+  .btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  .btn-demo {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    padding: 11px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .btn-demo:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Progress / Status ── */
+  .status-bar {
+    display: none;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .status-bar.visible { display: flex; }
+  .status-bar.loading { border-color: rgba(108,99,255,0.35); }
+  .status-bar.success { border-color: rgba(0,229,160,0.35); }
+  .status-bar.error   { border-color: rgba(255,107,107,0.35); }
+
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--accent);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .status-text { font-size: 12px; flex: 1; }
+  .status-bar.loading .status-text { color: var(--accent); }
+  .status-bar.success .status-text { color: var(--green); }
+  .status-bar.error   .status-text { color: var(--accent2); }
+
+  .progress-track {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+
+  /* ── Analysis container ── */
+  #analysis-area { display: none; }
+  #analysis-area.visible { display: block; }
+
+  /* ── Metric cards ── */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+
+  @media (max-width: 600px) {
+    .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  .metric-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .metric-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+  }
+
+  .metric-value {
+    font-family: 'Syne', sans-serif;
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1;
+  }
+
+  .metric-value.accent { color: var(--accent); }
+  .metric-value.green  { color: var(--green); }
+  .metric-value.orange { color: var(--orange); }
+
+  .metric-sub {
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  /* ── Section header ── */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-title::before {
+    content: '';
+    display: block;
+    width: 3px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+
+  .section-hint {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Top Predictions ── */
+  .predictions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+    margin-bottom: 36px;
+  }
+
+  .pred-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s, transform 0.2s;
+    cursor: default;
+  }
+
+  .pred-card:hover {
+    border-color: rgba(108,99,255,0.5);
+    transform: translateY(-2px);
+  }
+
+  .pred-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+  }
+
+  .pred-card.rank-1::before { background: linear-gradient(90deg, #ffd700, #ffb347); }
+  .pred-card.rank-2::before { background: linear-gradient(90deg, #c0c0c0, #9e9e9e); }
+  .pred-card.rank-3::before { background: linear-gradient(90deg, #cd7f32, #a0522d); }
+  .pred-card.rank-other::before { background: var(--accent); }
+
+  .pred-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .pred-rank {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  .pred-rank-1 { color: #ffd700; }
+  .pred-rank-2 { color: #c0c0c0; }
+  .pred-rank-3 { color: #cd7f32; }
+
+  .pred-badges {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .status-badge {
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+
+  .status-badge.hot    { background: rgba(255,107,107,0.2); color: var(--accent2); border: 1px solid rgba(255,107,107,0.3); }
+  .status-badge.cold   { background: rgba(79,195,247,0.15); color: var(--blue);    border: 1px solid rgba(79,195,247,0.3); }
+  .status-badge.due    { background: rgba(171,71,188,0.15); color: var(--purple);  border: 1px solid rgba(171,71,188,0.3); }
+  .status-badge.normal { background: rgba(85,90,107,0.15);  color: var(--muted);   border: 1px solid var(--border); }
+
+  .trend-arrow {
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .pred-number-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .pred-number {
+    font-family: 'Syne', sans-serif;
+    font-size: 52px;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--text);
+  }
+
+  .pred-score-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .pred-score-val {
+    font-family: 'Syne', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .pred-score-sub {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.5px;
+  }
+
+  /* Score breakdown bars */
+  .score-bars { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .bar-label {
+    font-size: 9px;
+    color: var(--muted);
+    width: 70px;
+    flex-shrink: 0;
+    letter-spacing: 0.5px;
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s ease;
+  }
+
+  .bar-fill.freq  { background: var(--accent); }
+  .bar-fill.trend { background: var(--green); }
+  .bar-fill.due   { background: var(--purple); }
+  .bar-fill.cons  { background: var(--orange); }
+
+  .bar-pct {
+    font-size: 9px;
+    color: var(--muted);
+    width: 28px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .pred-footer {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.3px;
+  }
+
+  /* ── Heatmap ── */
+  .heatmap-section { margin-bottom: 36px; }
+
+  .heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .heatmap-grid {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 4px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+  }
+
+  .heat-cell {
+    aspect-ratio: 1;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 0.15s, opacity 0.15s;
+    position: relative;
+  }
+
+  .heat-cell:hover { transform: scale(1.2); z-index: 10; opacity: 1 !important; }
+
+  .heat-cell .cell-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 10px;
+    white-space: nowrap;
+    z-index: 100;
+    color: var(--text);
+  }
+
+  .heat-cell:hover .cell-tooltip { display: block; }
+
+  /* ── Hot / Cold / Due ── */
+  .hcd-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 36px;
+  }
+
+  @media (max-width: 640px) {
+    .hcd-grid { grid-template-columns: 1fr; }
+  }
+
+  .hcd-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .hcd-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .hcd-header.hot  { color: var(--accent2); }
+  .hcd-header.cold { color: var(--blue); }
+  .hcd-header.due  { color: var(--purple); }
+
+  .hcd-body { padding: 12px 16px; }
+
+  .hcd-number-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(30,33,41,0.5);
+  }
+
+  .hcd-number-row:last-child { border-bottom: none; }
+
+  .hcd-num {
+    font-family: 'Syne', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .hcd-hot  { color: var(--accent2); }
+  .hcd-cold { color: var(--blue); }
+  .hcd-due  { color: var(--purple); }
+
+  .hcd-meta { font-size: 10px; color: var(--muted); text-align: right; line-height: 1.5; }
+
+  /* ── Trend mini-chart ── */
+  .trend-section { margin-bottom: 36px; }
+
+  .trend-chart {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+
+  .trend-bars-area {
+    display: flex;
+    gap: 3px;
+    align-items: flex-end;
+    height: 80px;
+    margin-top: 10px;
+  }
+
+  .trend-bar-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .trend-bar {
+    width: 100%;
+    border-radius: 3px 3px 0 0;
+    min-height: 3px;
+    transition: height 0.5s ease;
+  }
+
+  .trend-bar-label {
+    font-size: 8px;
+    color: var(--muted);
+    transform: rotate(-45deg);
+    transform-origin: center;
+    margin-top: 4px;
+    white-space: nowrap;
+  }
+
+  /* ── Empty state ── */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+
+  .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.4; }
+  .empty-state p { font-size: 12px; line-height: 2; }
+  .empty-state strong { color: var(--text); }
+
+  /* ── Disclaimer ── */
+  .disclaimer {
+    background: rgba(108,99,255,0.06);
+    border: 1px solid rgba(108,99,255,0.2);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 10px;
+    color: var(--muted);
+    line-height: 1.8;
+    letter-spacing: 0.3px;
+    margin-bottom: 28px;
+  }
+
+  .disclaimer strong { color: var(--accent); }
+
+  /* Responsive adjustments */
+  @media (max-width: 600px) {
+    .predictions-grid { grid-template-columns: 1fr; }
+    .pred-number { font-size: 40px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ── HEADER ── -->
+  <header>
+    <div class="logo">
+      <div class="logo-main">LoteStat · Anguila Trends</div>
+      <div class="logo-sub">Análisis de Tendencias y Predicciones</div>
+    </div>
+    <div class="header-badge">
+      <div class="badge" id="analysis-date-badge">—</div>
+      <div class="badge live" id="live-badge" style="display:none">● EN VIVO</div>
+    </div>
+  </header>
+
+  <!-- ── DISCLAIMER ── -->
+  <div class="disclaimer">
+    <strong>⚠ Aviso:</strong> Este análisis es estadístico y educativo. La lotería es un juego de azar y ningún patrón garantiza resultados futuros.
+    Los scores reflejan tendencias históricas, no probabilidades matemáticas reales.
+  </div>
+
+  <!-- ── CONTROLS ── -->
+  <div class="controls-panel">
+    <div class="controls-row">
+      <div class="ctrl-group" style="max-width:200px;">
+        <label>Período de análisis</label>
+        <div class="pill-group" id="days-pills">
+          <button class="pill" onclick="setDays(15, this)">15 días</button>
+          <button class="pill active" onclick="setDays(30, this)">30 días</button>
+          <button class="pill" onclick="setDays(60, this)">60 días</button>
+          <button class="pill" onclick="setDays(90, this)">90 días</button>
+        </div>
+      </div>
+      <div class="ctrl-group" style="max-width:160px;">
+        <label>Sorteo Anguila</label>
+        <select id="draw-filter">
+          <option value="all">Todos los sorteos</option>
+          <option value="8AM">Anguila 8AM</option>
+          <option value="9AM">Anguila 9AM</option>
+          <option value="10AM">Anguila 10AM</option>
+          <option value="11AM">Anguila 11AM</option>
+          <option value="12PM">Anguila 12PM</option>
+          <option value="1PM">Anguila 1PM</option>
+          <option value="2PM">Anguila 2PM</option>
+          <option value="3PM">Anguila 3PM</option>
+          <option value="4PM">Anguila 4PM</option>
+          <option value="5PM">Anguila 5PM</option>
+          <option value="6PM">Anguila 6PM</option>
+          <option value="7PM">Anguila 7PM</option>
+        </select>
+      </div>
+      <div class="ctrl-group" style="max-width:120px;">
+        <label>Top predicciones</label>
+        <select id="top-count">
+          <option value="5">Top 5</option>
+          <option value="10" selected>Top 10</option>
+          <option value="15">Top 15</option>
+          <option value="20">Top 20</option>
+        </select>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-end;">
+        <button class="btn-demo" onclick="loadDemoData()">📊 Demo</button>
+        <button class="btn-analyze" id="btn-analyze" onclick="startAnalysis()">
+          <span>🔍</span> Analizar Tendencias
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── STATUS BAR ── -->
+  <div class="status-bar" id="status-bar">
+    <div class="spinner" id="spinner" style="display:none;"></div>
+    <span class="status-text" id="status-text">Cargando...</span>
+    <div class="progress-track" id="progress-track" style="display:none;">
+      <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+    </div>
+  </div>
+
+  <!-- ── EMPTY STATE ── -->
+  <div class="empty-state" id="empty-state">
+    <div class="empty-icon">🎯</div>
+    <p>
+      Presiona <strong>Analizar Tendencias</strong> para obtener predicciones en vivo<br>
+      o <strong>Demo</strong> para ver un ejemplo con datos de muestra.<br><br>
+      El análisis procesa hasta 90 días de resultados históricos<br>
+      y calcula un score compuesto para cada número (00–99).
+    </p>
+  </div>
+
+  <!-- ── ANALYSIS AREA ── -->
+  <div id="analysis-area">
+
+    <!-- Metric cards -->
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Sorteos analizados</div>
+        <div class="metric-value accent" id="m-draws">—</div>
+        <div class="metric-sub" id="m-draws-sub">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Números con datos</div>
+        <div class="metric-value" id="m-numbers">—</div>
+        <div class="metric-sub" id="m-numbers-sub">de 100 posibles</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Número más caliente</div>
+        <div class="metric-value orange" id="m-hottest">—</div>
+        <div class="metric-sub" id="m-hottest-sub">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Número más pendiente</div>
+        <div class="metric-value green" id="m-due">—</div>
+        <div class="metric-sub" id="m-due-sub">—</div>
+      </div>
+    </div>
+
+    <!-- Top Predictions -->
+    <div class="section-header">
+      <div class="section-title">Top Predicciones</div>
+      <div class="section-hint" id="top-count-label">Top 10 · Score compuesto</div>
+    </div>
+    <div class="predictions-grid" id="predictions-grid"></div>
+
+    <!-- Number Heatmap -->
+    <div class="heatmap-section">
+      <div class="section-header">
+        <div class="section-title">Mapa de Calor 00–99</div>
+        <div class="section-hint">Pasa el cursor sobre cada número</div>
+      </div>
+      <div class="heatmap-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#ff4444;"></div> Muy caliente</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ffb347;"></div> Caliente</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#555a6b;"></div> Normal</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#4fc3f7;"></div> Frío</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ab47bc;"></div> Muy pendiente</div>
+      </div>
+      <div class="heatmap-grid" id="heatmap-grid"></div>
+    </div>
+
+    <!-- Hot / Cold / Due -->
+    <div class="section-header" style="margin-bottom:16px;">
+      <div class="section-title">Caliente · Frío · Pendiente</div>
+      <div class="section-hint">Top 5 de cada categoría</div>
+    </div>
+    <div class="hcd-grid">
+      <div class="hcd-card">
+        <div class="hcd-header hot">🔥 Números Calientes</div>
+        <div class="hcd-body" id="hot-list"></div>
+      </div>
+      <div class="hcd-card">
+        <div class="hcd-header cold">🧊 Números Fríos</div>
+        <div class="hcd-body" id="cold-list"></div>
+      </div>
+      <div class="hcd-card">
+        <div class="hcd-header due">⏳ Números Pendientes</div>
+        <div class="hcd-body" id="due-list"></div>
+      </div>
+    </div>
+
+    <!-- Trend Mini-Chart -->
+    <div class="trend-section">
+      <div class="section-header">
+        <div class="section-title">Números más activos (últimos 20 sorteos)</div>
+        <div class="section-hint">Frecuencia acumulada por sorteo</div>
+      </div>
+      <div class="trend-chart">
+        <div id="trend-chart-inner">
+          <div class="trend-bars-area" id="trend-bars"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end #analysis-area -->
+
+</div>
+
+<script>
+  /* ════════════════════════════════════════════════════════
+     STATE
+  ════════════════════════════════════════════════════════ */
+  let activeDays = 30;
+  let allDraws = [];     // { date, time, n1, n2, n3 }
+  let scores = [];       // computed scores per number
+
+  const DRAW_TIMES = ['8AM','9AM','10AM','11AM','12PM','1PM','2PM','3PM','4PM','5PM','6PM','7PM'];
+
+  /* ════════════════════════════════════════════════════════
+     UI HELPERS
+  ════════════════════════════════════════════════════════ */
+  function setDays(n, btn) {
+    activeDays = n;
+    document.querySelectorAll('#days-pills .pill').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  function showStatus(type, msg, progress = null) {
+    const bar = document.getElementById('status-bar');
+    const spinner = document.getElementById('spinner');
+    const text = document.getElementById('status-text');
+    const track = document.getElementById('progress-track');
+    const fill = document.getElementById('progress-fill');
+
+    bar.className = 'status-bar visible ' + type;
+    spinner.style.display = type === 'loading' ? 'block' : 'none';
+    text.textContent = msg;
+
+    if (progress !== null) {
+      track.style.display = 'block';
+      fill.style.width = progress + '%';
+    } else {
+      track.style.display = 'none';
+    }
+  }
+
+  function hideStatus() {
+    document.getElementById('status-bar').className = 'status-bar';
+  }
+
+  function showAnalysis() {
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('analysis-area').classList.add('visible');
+  }
+
+  /* ════════════════════════════════════════════════════════
+     SAMPLE DATA GENERATOR
+     Uses a deterministic seeded RNG so results are consistent.
+  ════════════════════════════════════════════════════════ */
+  function seededRNG(seed) {
+    // LCG random generator
+    let s = seed % 2147483647;
+    if (s <= 0) s += 2147483646;
+    return function () {
+      s = (s * 16807) % 2147483647;
+      return (s - 1) / 2147483646;
+    };
+  }
+
+  function generateSampleData(days) {
+    const draws = [];
+    const baseDate = new Date('2026-05-04');
+
+    // Create weighted number pool: some numbers appear more often (hot)
+    // This simulates real-world clustering patterns
+    const hotNums  = [37, 42, 15, 83, 61, 29, 74, 56, 08, 91];
+    const coldNums = [00, 07, 88, 99, 44, 13, 66, 31, 77, 20];
+
+    for (let d = days - 1; d >= 0; d--) {
+      const date = new Date(baseDate);
+      date.setDate(date.getDate() - d);
+      const dateStr = date.toISOString().split('T')[0];
+      const rng = seededRNG(d * 1000 + 17);
+
+      // Anguilla typically has draws throughout the day
+      const timesForDay = DRAW_TIMES;
+
+      timesForDay.forEach((time, tIdx) => {
+        const rng2 = seededRNG(d * 1000 + tIdx * 100 + 31);
+
+        function pickNumber() {
+          const r = rng2();
+          // 25% chance to pick from hot pool, 5% from cold, rest random
+          if (r < 0.25) {
+            const hi = Math.floor(rng2() * hotNums.length);
+            return String(hotNums[hi]).padStart(2, '0');
+          } else if (r < 0.30) {
+            const ci = Math.floor(rng2() * coldNums.length);
+            return String(coldNums[ci]).padStart(2, '0');
+          } else {
+            return String(Math.floor(rng2() * 100)).padStart(2, '0');
+          }
+        }
+
+        draws.push({
+          date: dateStr,
+          time,
+          n1: pickNumber(),
+          n2: pickNumber(),
+          n3: pickNumber()
+        });
+      });
+    }
+
+    return draws;
+  }
+
+  /* ════════════════════════════════════════════════════════
+     LIVE DATA FETCHING
+  ════════════════════════════════════════════════════════ */
+  async function fetchDayData(dateStr) {
+    const targetUrl = `https://enloteria.com/?fecha=${dateStr}`;
+    const proxyUrl  = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+
+    const resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+    if (!resp.ok) throw new Error('proxy error');
+    const json = await resp.json();
+    return parseDayHTML(json.contents || '', dateStr);
+  }
+
+  function parseDayHTML(html, dateStr) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const draws = [];
+
+    // Try to find rows/cards with Anguilla results
+    // Strategy 1: look for headings that contain "Anguil"
+    const allElements = doc.querySelectorAll('h1,h2,h3,h4,h5,h6,strong,b,.lottery-name,.title');
+
+    for (const el of allElements) {
+      const name = el.textContent.trim();
+      if (!/anguil/i.test(name)) continue;
+
+      // Try to extract numbers from the surrounding container
+      const container = el.closest('div,li,article,tr') || el.parentElement;
+      if (!container) continue;
+
+      const text = container.textContent || '';
+      const numMatches = text.match(/\b(\d{2})\b/g) || [];
+      const nums = numMatches
+        .map(n => n.trim())
+        .filter(n => { const v = parseInt(n); return v >= 0 && v <= 99; })
+        .slice(0, 3);
+
+      if (nums.length >= 2) {
+        // Infer draw time from name
+        const timeMatch = name.match(/\b(\d{1,2}(?:AM|PM)|\d{1,2}:\d{2}\s*(?:AM|PM)?)\b/i);
+        const time = timeMatch ? timeMatch[0].toUpperCase().replace(/\s+/g, '') : 'AM';
+        draws.push({ date: dateStr, time, n1: nums[0], n2: nums[1], n3: nums[2] || nums[1] });
+      }
+    }
+
+    // Strategy 2: look for table rows with Anguilla
+    if (draws.length === 0) {
+      const rows = doc.querySelectorAll('tr');
+      for (const row of rows) {
+        const cells = row.querySelectorAll('td,th');
+        if (cells.length < 3) continue;
+        const nameCell = cells[0].textContent.trim();
+        if (!/anguil/i.test(nameCell)) continue;
+
+        const nums = [];
+        for (let i = 1; i < Math.min(cells.length, 5); i++) {
+          const m = cells[i].textContent.trim().match(/\d{2}/);
+          if (m) nums.push(m[0]);
+        }
+        if (nums.length >= 2) {
+          const timeMatch = nameCell.match(/\b(\d{1,2}(?:AM|PM))\b/i);
+          const time = timeMatch ? timeMatch[0].toUpperCase() : 'AM';
+          draws.push({ date: dateStr, time, n1: nums[0], n2: nums[1], n3: nums[2] || nums[1] });
+        }
+      }
+    }
+
+    return draws;
+  }
+
+  /* ════════════════════════════════════════════════════════
+     SCORING ENGINE
+  ════════════════════════════════════════════════════════ */
+  function computeScores(draws) {
+    // Build per-number stats
+    const stats = {};
+    for (let i = 0; i <= 99; i++) {
+      const n = String(i).padStart(2, '0');
+      stats[n] = {
+        count: 0,
+        appearances: [],  // draw indices
+        positions: [0, 0, 0],
+        lastSeen: -1
+      };
+    }
+
+    const totalDraws = draws.length;
+
+    draws.forEach((draw, idx) => {
+      [draw.n1, draw.n2, draw.n3].forEach((num, pos) => {
+        if (!num || !/^\d{2}$/.test(num)) return;
+        const s = stats[num];
+        s.count++;
+        s.appearances.push(idx);
+        s.positions[pos]++;
+        s.lastSeen = idx;
+      });
+    });
+
+    const totalNumbers = draws.reduce((acc, d) => {
+      return acc + [d.n1, d.n2, d.n3].filter(n => n && /^\d{2}$/.test(n)).length;
+    }, 0);
+
+    const expectedFreqPerDraw = totalNumbers / Math.max(totalDraws, 1);
+    const expectedTotal = totalNumbers / 100; // each number's fair share
+    const maxCount = Math.max(...Object.values(stats).map(s => s.count), 1);
+    const halfPoint = Math.floor(totalDraws / 2);
+
+    const scored = [];
+
+    for (const [num, s] of Object.entries(stats)) {
+      // ── 1. Frequency Score (0–35 pts) ──────────────────
+      // Ratio vs expected: numbers appearing > expected are "hot"
+      const freqRatio = s.count / Math.max(expectedTotal, 0.1);
+      // Normalize: 1.0 ratio → 17.5pts, 2.0+ ratio → 35pts, 0 → 0
+      const freqScore = Math.min(freqRatio / 2, 1) * 35;
+
+      // ── 2. Due/Gap Score (0–30 pts) ───────────────────
+      // Current gap: draws since last appearance
+      const gap = s.lastSeen === -1
+        ? totalDraws                           // never appeared → max gap
+        : totalDraws - 1 - s.lastSeen;
+
+      // Average gap: expected gap between appearances
+      const avgGap = s.count > 0
+        ? totalDraws / s.count
+        : totalDraws;
+
+      // If gap > avgGap, number is "overdue" → higher score
+      const dueRatio = gap / Math.max(avgGap, 1);
+      const dueScore = Math.min(dueRatio / 2.5, 1) * 30;
+
+      // ── 3. Trend Score (0–25 pts) ─────────────────────
+      // Compare frequency in recent half vs older half
+      const recentApps = s.appearances.filter(i => i >= halfPoint).length;
+      const oldApps    = s.appearances.filter(i => i < halfPoint).length;
+      const recentRate = recentApps / Math.max(totalDraws - halfPoint, 1);
+      const oldRate    = oldApps    / Math.max(halfPoint, 1);
+
+      // Delta normalized to ±0.1 per draw
+      const trendDelta = recentRate - oldRate;
+      // Map to 0–25: neutral (0 delta) → 12.5, rising → closer to 25
+      const trendScore = Math.min(Math.max((trendDelta / 0.06 * 0.5 + 0.5), 0), 1) * 25;
+
+      const trendDir = trendDelta > 0.005 ? 'rising'
+                      : trendDelta < -0.005 ? 'falling'
+                      : 'stable';
+
+      // ── 4. Consistency Score (0–10 pts) ───────────────
+      // How evenly spread are appearances? (lower variance = more consistent)
+      let consScore = 5; // neutral default
+      if (s.appearances.length >= 3) {
+        const gaps = [];
+        for (let i = 1; i < s.appearances.length; i++) {
+          gaps.push(s.appearances[i] - s.appearances[i - 1]);
+        }
+        const avgInnerGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+        const variance = gaps.reduce((a, b) => a + Math.pow(b - avgInnerGap, 2), 0) / gaps.length;
+        const cv = avgInnerGap > 0 ? Math.sqrt(variance) / avgInnerGap : 1;
+        // Low CV → consistent → high score
+        consScore = Math.max(0, (1 - Math.min(cv, 2) / 2)) * 10;
+      }
+
+      // ── Composite ─────────────────────────────────────
+      const totalScore = freqScore + dueScore + trendScore + consScore;
+
+      // ── Status label ──────────────────────────────────
+      let status = 'normal';
+      if (s.count > expectedTotal * 1.5)        status = 'hot';
+      else if (s.count < expectedTotal * 0.5)   status = 'cold';
+      if (gap > avgGap * 1.8 && status !== 'hot') status = 'due';
+
+      scored.push({
+        number: num,
+        totalScore: Math.min(Math.max(totalScore, 0), 100),
+        freqScore:  Math.min(Math.max(freqScore,  0), 35),
+        dueScore:   Math.min(Math.max(dueScore,   0), 30),
+        trendScore: Math.min(Math.max(trendScore, 0), 25),
+        consScore:  Math.min(Math.max(consScore,  0), 10),
+        count: s.count,
+        gap,
+        avgGap,
+        lastSeen: s.lastSeen,
+        appearances: s.appearances,
+        trendDir,
+        status,
+        freqRatio
+      });
+    }
+
+    return scored.sort((a, b) => b.totalScore - a.totalScore);
+  }
+
+  /* ════════════════════════════════════════════════════════
+     RENDER FUNCTIONS
+  ════════════════════════════════════════════════════════ */
+
+  // ── Metric cards ──────────────────────────────────────
+  function renderMetrics(draws, scores) {
+    const datesSorted = [...new Set(draws.map(d => d.date))].sort();
+    document.getElementById('m-draws').textContent = draws.length;
+    document.getElementById('m-draws-sub').textContent =
+      datesSorted.length > 1
+        ? `${datesSorted[0]} → ${datesSorted[datesSorted.length - 1]}`
+        : datesSorted[0] || '—';
+
+    const numsWithData = scores.filter(s => s.count > 0).length;
+    document.getElementById('m-numbers').textContent = numsWithData;
+
+    const hottest = scores.filter(s => s.status === 'hot')[0] || scores[0];
+    document.getElementById('m-hottest').textContent = hottest ? hottest.number : '—';
+    document.getElementById('m-hottest-sub').textContent = hottest
+      ? `${hottest.count}× aparece`
+      : '—';
+
+    const dueNum = [...scores].sort((a, b) => b.dueScore - a.dueScore)[0];
+    document.getElementById('m-due').textContent = dueNum ? dueNum.number : '—';
+    document.getElementById('m-due-sub').textContent = dueNum
+      ? `${dueNum.gap} sorteos sin salir`
+      : '—';
+  }
+
+  // ── Prediction cards ──────────────────────────────────
+  function renderPredictions(scores, topN) {
+    const grid = document.getElementById('predictions-grid');
+    grid.innerHTML = '';
+    const top = scores.slice(0, topN);
+
+    document.getElementById('top-count-label').textContent =
+      `Top ${topN} · Score compuesto (100 pts)`;
+
+    top.forEach((s, i) => {
+      const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'rank-other';
+      const rankLabel = i === 0 ? '🥇 #1' : i === 1 ? '🥈 #2' : i === 2 ? '🥉 #3' : `# ${i + 1}`;
+      const rankColor = i === 0 ? 'pred-rank-1' : i === 1 ? 'pred-rank-2' : i === 2 ? 'pred-rank-3' : '';
+
+      const trendEmoji = s.trendDir === 'rising' ? '↑' : s.trendDir === 'falling' ? '↓' : '→';
+      const trendColor = s.trendDir === 'rising' ? 'color:var(--green)'
+                       : s.trendDir === 'falling' ? 'color:var(--accent2)'
+                       : 'color:var(--muted)';
+
+      const scoreStr = s.totalScore.toFixed(1);
+      const lastSeenStr = s.lastSeen === -1
+        ? 'nunca'
+        : `hace ${s.gap} sorteos`;
+
+      const card = document.createElement('div');
+      card.className = `pred-card ${rankClass}`;
+      card.innerHTML = `
+        <div class="pred-top-row">
+          <span class="pred-rank ${rankColor}">${rankLabel}</span>
+          <div class="pred-badges">
+            <span class="status-badge ${s.status}">${statusLabel(s.status)}</span>
+            <span class="trend-arrow" style="${trendColor}">${trendEmoji}</span>
+          </div>
+        </div>
+        <div class="pred-number-row">
+          <div class="pred-number">${s.number}</div>
+          <div class="pred-score-label">
+            <div class="pred-score-val">${scoreStr}</div>
+            <div class="pred-score-sub">puntos</div>
+          </div>
+        </div>
+        <div class="score-bars">
+          <div class="bar-row">
+            <span class="bar-label">Frecuencia</span>
+            <div class="bar-track"><div class="bar-fill freq" style="width:${(s.freqScore/35*100).toFixed(0)}%"></div></div>
+            <span class="bar-pct">${(s.freqScore/35*100).toFixed(0)}%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Tendencia</span>
+            <div class="bar-track"><div class="bar-fill trend" style="width:${(s.trendScore/25*100).toFixed(0)}%"></div></div>
+            <span class="bar-pct">${(s.trendScore/25*100).toFixed(0)}%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Brecha</span>
+            <div class="bar-track"><div class="bar-fill due" style="width:${(s.dueScore/30*100).toFixed(0)}%"></div></div>
+            <span class="bar-pct">${(s.dueScore/30*100).toFixed(0)}%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Consistencia</span>
+            <div class="bar-track"><div class="bar-fill cons" style="width:${(s.consScore/10*100).toFixed(0)}%"></div></div>
+            <span class="bar-pct">${(s.consScore/10*100).toFixed(0)}%</span>
+          </div>
+        </div>
+        <div class="pred-footer">
+          <span>Aparece <strong>${s.count}×</strong></span>
+          <span>${lastSeenStr}</span>
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+  }
+
+  function statusLabel(s) {
+    const labels = { hot: '🔥 CALIENTE', cold: '🧊 FRÍO', due: '⏳ PENDIENTE', normal: '⚖ NORMAL' };
+    return labels[s] || s;
+  }
+
+  // ── Heatmap ───────────────────────────────────────────
+  function renderHeatmap(scores, totalDraws) {
+    const grid = document.getElementById('heatmap-grid');
+    grid.innerHTML = '';
+
+    const scoreMap = {};
+    scores.forEach(s => { scoreMap[s.number] = s; });
+
+    const maxCount = Math.max(...scores.map(s => s.count), 1);
+    const expectedTotal = totalDraws * 3 / 100;
+
+    for (let i = 0; i <= 99; i++) {
+      const num = String(i).padStart(2, '0');
+      const s = scoreMap[num] || { count: 0, gap: totalDraws, totalScore: 0, status: 'cold', trendDir: 'stable' };
+
+      const ratio = s.count / Math.max(expectedTotal, 1);
+      const color = getHeatColor(ratio, s.gap, totalDraws);
+      const opacity = 0.5 + Math.min(s.count / maxCount, 1) * 0.5;
+
+      const cell = document.createElement('div');
+      cell.className = 'heat-cell';
+      cell.style.background = color;
+      cell.style.color = ratio > 1.2 ? '#fff' : ratio < 0.5 ? '#9ec8e8' : '#e8eaf0';
+      cell.style.opacity = s.count === 0 ? '0.3' : '1';
+      cell.title = `${num}: ${s.count}× | score ${s.totalScore.toFixed(1)}`;
+      cell.innerHTML = `
+        <span>${num}</span>
+        <div class="cell-tooltip">${num} · ${s.count}× aparece · gap ${s.gap} · ${statusLabel(s.status)}</div>
+      `;
+      grid.appendChild(cell);
+    }
+  }
+
+  function getHeatColor(ratio, gap, totalDraws) {
+    // ratio >1.5 = very hot (red), 1.0-1.5 = warm (orange), 0.5-1.0 = normal, <0.5 = cold (blue)
+    // But also factor in gap (overdue = purple tint)
+    const gapRatio = gap / (totalDraws / 3); // gap relative to expected interval
+
+    if (gapRatio > 2.5 && ratio < 0.8) {
+      // Overdue: purple
+      const intensity = Math.min((gapRatio - 2.5) / 2, 1);
+      return `rgba(171,71,188,${0.3 + intensity * 0.5})`;
+    }
+    if (ratio >= 2.0) return 'rgba(255,30,30,0.8)';
+    if (ratio >= 1.5) return 'rgba(255,80,80,0.65)';
+    if (ratio >= 1.2) return 'rgba(255,140,60,0.55)';
+    if (ratio >= 0.8) return 'rgba(85,90,107,0.4)';
+    if (ratio >= 0.5) return 'rgba(79,180,220,0.35)';
+    return 'rgba(50,130,200,0.45)';
+  }
+
+  // ── Hot / Cold / Due lists ─────────────────────────────
+  function renderHotCold(scores) {
+    const hot  = [...scores].sort((a, b) => b.count - a.count).slice(0, 5);
+    const cold = [...scores].sort((a, b) => a.count - b.count).slice(0, 5);
+    const due  = [...scores].filter(s => s.count > 0)
+                             .sort((a, b) => b.gap - a.gap).slice(0, 5);
+
+    fillHCDList('hot-list',  hot,  'hcd-hot');
+    fillHCDList('cold-list', cold, 'hcd-cold');
+    fillHCDList('due-list',  due,  'hcd-due', true);
+  }
+
+  function fillHCDList(id, items, cls, isDue = false) {
+    const el = document.getElementById(id);
+    el.innerHTML = items.map(s => `
+      <div class="hcd-number-row">
+        <span class="hcd-num ${cls}">${s.number}</span>
+        <div class="hcd-meta">
+          ${isDue
+            ? `${s.gap} sorteos sin salir<br>Score ${s.totalScore.toFixed(1)}`
+            : `${s.count}× · Score ${s.totalScore.toFixed(1)}`
+          }
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ── Trend chart (last 20 draws activity) ──────────────
+  function renderTrendChart(draws) {
+    const recentDraws = draws.slice(-20);
+    if (recentDraws.length === 0) return;
+
+    // Count appearances per draw slot
+    const bars = document.getElementById('trend-bars');
+    bars.innerHTML = '';
+
+    // Find unique numbers in recent draws and their totals
+    const numCounts = {};
+    recentDraws.forEach(d => {
+      [d.n1, d.n2, d.n3].forEach(n => {
+        if (!n || !/^\d{2}$/.test(n)) return;
+        numCounts[n] = (numCounts[n] || 0) + 1;
+      });
+    });
+
+    // Sort by count, take top 15 for display
+    const topNums = Object.entries(numCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15);
+
+    const maxVal = Math.max(...topNums.map(([, v]) => v), 1);
+
+    topNums.forEach(([num, count]) => {
+      const heightPct = (count / maxVal) * 100;
+      const col = document.createElement('div');
+      col.className = 'trend-bar-col';
+
+      const hue = Math.floor((1 - heightPct / 100) * 240); // blue → red
+      col.innerHTML = `
+        <div class="trend-bar"
+             style="height:${heightPct}%; background:hsl(${hue},70%,55%); min-height:4px;"
+             title="${num}: ${count}×">
+        </div>
+        <span class="trend-bar-label">${num}</span>
+      `;
+      bars.appendChild(col);
+    });
+  }
+
+  /* ════════════════════════════════════════════════════════
+     MAIN ANALYSIS FLOW
+  ════════════════════════════════════════════════════════ */
+  async function startAnalysis() {
+    const btn = document.getElementById('btn-analyze');
+    btn.disabled = true;
+    document.getElementById('empty-state').style.display = 'none';
+
+    showStatus('loading', `Obteniendo ${activeDays} días de datos de Anguila...`, 0);
+
+    const fetchedDraws = [];
+    const today = new Date('2026-05-04'); // Anchor date
+    let fetchedDays = 0;
+    let errors = 0;
+
+    for (let d = activeDays - 1; d >= 0; d--) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - d);
+      const dateStr = date.toISOString().split('T')[0];
+
+      const progress = Math.round(((activeDays - d) / activeDays) * 80);
+      showStatus('loading', `Cargando ${dateStr}… (día ${activeDays - d}/${activeDays})`, progress);
+
+      try {
+        const dayDraws = await fetchDayData(dateStr);
+        fetchedDraws.push(...dayDraws);
+        fetchedDays++;
+      } catch (e) {
+        errors++;
+        // Fall through silently; try to use fetched data + fill with demo
+      }
+
+      // Small delay to avoid hammering the proxy
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    showStatus('loading', 'Calculando scores…', 90);
+
+    if (fetchedDraws.length < 20) {
+      // Not enough live data; augment with sample data
+      showStatus('loading', 'Datos insuficientes — usando datos de muestra…', 92);
+      await new Promise(r => setTimeout(r, 300));
+      allDraws = generateSampleData(activeDays);
+    } else {
+      allDraws = fetchedDraws;
+      document.getElementById('live-badge').style.display = 'flex';
+    }
+
+    applyFilterAndRender();
+
+    showStatus('success',
+      `✓ ${allDraws.length} sorteos analizados · ${errors > 0 ? errors + ' días con error (datos de muestra usados)' : 'datos en vivo'}`,
+      100);
+
+    setTimeout(hideStatus, 5000);
+    btn.disabled = false;
+  }
+
+  function loadDemoData() {
+    showStatus('loading', 'Cargando datos de muestra…', 50);
+    allDraws = generateSampleData(activeDays);
+    document.getElementById('live-badge').style.display = 'none';
+
+    setTimeout(() => {
+      applyFilterAndRender();
+      showStatus('success', `✓ ${allDraws.length} sorteos de muestra analizados · ${activeDays} días`);
+      setTimeout(hideStatus, 3000);
+    }, 400);
+  }
+
+  function applyFilterAndRender() {
+    const filter = document.getElementById('draw-filter').value;
+    const topN   = parseInt(document.getElementById('top-count').value);
+
+    let filtered = allDraws;
+    if (filter !== 'all') {
+      filtered = allDraws.filter(d =>
+        d.time && d.time.toUpperCase().includes(filter.toUpperCase())
+      );
+    }
+
+    if (filtered.length === 0) filtered = allDraws; // fallback
+
+    scores = computeScores(filtered);
+
+    renderMetrics(filtered, scores);
+    renderPredictions(scores, topN);
+    renderHeatmap(scores, filtered.length);
+    renderHotCold(scores);
+    renderTrendChart(filtered);
+
+    document.getElementById('analysis-date-badge').textContent =
+      filter === 'all' ? `${activeDays} días · todos` : `${activeDays} días · ${filter}`;
+
+    showAnalysis();
+  }
+
+  /* ════════════════════════════════════════════════════════
+     INIT
+  ════════════════════════════════════════════════════════ */
+  // Wire up filter/top-count changes to re-render if data is loaded
+  document.getElementById('draw-filter').addEventListener('change', () => {
+    if (allDraws.length > 0) applyFilterAndRender();
+  });
+  document.getElementById('top-count').addEventListener('change', () => {
+    if (scores.length > 0) {
+      const topN = parseInt(document.getElementById('top-count').value);
+      renderPredictions(scores, topN);
+    }
+  });
+</script>
+</body>
+</html>
