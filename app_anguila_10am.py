@@ -222,6 +222,8 @@ def calcular_score_candidatos(hist_lot,fecha_actual,por_fecha):
         candidatos[n]=round(score,4)
     return candidatos
 
+MIN_WARMUP = 50  # sorteos mínimos antes de que el score se estabiliza
+
 # ══════════════════════════════════════════════════════════
 # APRENDIZAJE
 # ══════════════════════════════════════════════════════════
@@ -263,10 +265,16 @@ def analizar_loteria_total_pro(loteria,registros_loteria,por_fecha):
         atraso=i if ult is None else (i-1-ult); atraso_ganador.append(atraso)
         eventos.append({"fecha":fecha,"real_1ra":real,"score_real":round(score_real,4),"rank_real":rank_real,"hit_top5":hit5,"hit_top10":hit10,"top5":top5,"top10":top10,"atraso_real":atraso})
         score_por_fecha.append({"fecha":fecha,"score_ganador":round(score_real,4),"rank_ganador":rank_real or 100,"numero":real})
-    if scores_ganadores:
-        sc_sorted=sorted(scores_ganadores)
+    # ── Rango ganador: SOLO fase estable (post-calentamiento) ─────────────
+    # Los primeros MIN_WARMUP sorteos tienen score bajo/ruidoso porque no hay
+    # suficiente historia — incluirlos contamina el rango y lo hace inexacto.
+    scores_estables=scores_ganadores[MIN_WARMUP:] if len(scores_ganadores)>MIN_WARMUP else scores_ganadores
+    warmup_fecha=score_por_fecha[MIN_WARMUP]["fecha"] if len(score_por_fecha)>MIN_WARMUP else (score_por_fecha[0]["fecha"] if score_por_fecha else "")
+    base_rango=scores_estables if scores_estables else scores_ganadores
+    if base_rango:
+        sc_sorted=sorted(base_rango)
         q25=sc_sorted[int(len(sc_sorted)*0.25)]; q50=sc_sorted[int(len(sc_sorted)*0.50)]; q75=sc_sorted[int(len(sc_sorted)*0.75)]
-        score_min=min(scores_ganadores); score_max=max(scores_ganadores); score_prom=sum(scores_ganadores)/len(scores_ganadores)
+        score_min=min(base_rango); score_max=max(base_rango); score_prom=sum(base_rango)/len(base_rango)
     else: score_min=score_max=score_prom=q25=q50=q75=0
     atraso_prom=sum(atraso_ganador)/len(atraso_ganador) if atraso_ganador else 0
     resumen={"loteria":loteria,"eventos_historicos":len(registros_loteria),"eventos_evaluados":total_eval,
@@ -277,6 +285,7 @@ def analizar_loteria_total_pro(loteria,registros_loteria,por_fecha):
         "score_ganador":{"min":round(score_min,4),"max":round(score_max,4),"promedio":round(score_prom,4),
             "q25":round(q25,4),"q50":round(q50,4),"q75":round(q75,4),
             "rango_min":round(q25*0.85,4),"rango_max":round(q75*1.20,4)},
+        "warmup_n":MIN_WARMUP,"warmup_fecha":warmup_fecha,
         "atraso_ganador_promedio":round(atraso_prom,2),
         "numeros_ganadores_frecuencia":dict(frecuencia_ganadora.most_common()),
         "score_por_fecha":score_por_fecha,"eventos":eventos[-500:],
@@ -790,7 +799,9 @@ def grafica_anguila():
         niveles=[]
         if escala_max>escala_min:
             for i in range(1,5): niveles.append(round(escala_min+((escala_max-escala_min)*i/4),2))
-        return jsonify({"loteria":nombre_obj,"puntos":puntos,"rango_min":rango_min,"rango_max":rango_max,"promedio":promedio,"escala_min":round(escala_min,2),"escala_max":round(escala_max,2),"niveles":niveles,"total":len(puntos),"tendencia":tendencia,"proyeccion_score":round(proyeccion_score,2),"media_mov":round(media_mov,2),"brecha_min":round(brecha_min,2),"brecha_max":round(brecha_max,2)})
+        warmup_n=int(lot_mem.get("warmup_n",MIN_WARMUP) or MIN_WARMUP)
+        warmup_fecha=str(lot_mem.get("warmup_fecha","") or "")
+        return jsonify({"loteria":nombre_obj,"puntos":puntos,"rango_min":rango_min,"rango_max":rango_max,"promedio":promedio,"escala_min":round(escala_min,2),"escala_max":round(escala_max,2),"niveles":niveles,"total":len(puntos),"tendencia":tendencia,"proyeccion_score":round(proyeccion_score,2),"media_mov":round(media_mov,2),"brecha_min":round(brecha_min,2),"brecha_max":round(brecha_max,2),"warmup_n":warmup_n,"warmup_fecha":warmup_fecha})
     except Exception as e: return jsonify({"error":str(e)})
 
 @app.route("/heatmap_anguila")
@@ -1242,20 +1253,37 @@ function dibujarGrafica(prog){
   ctx.clearRect(0,0,w,h);
 
   const rmin=Number(graficaData.rango_min||minY), rmax=Number(graficaData.rango_max||maxY);
+  const warmupN=Number(graficaData.warmup_n||50);
+  const warmupX=puntos.length>warmupN ? xp(warmupN) : -1; // X donde termina calentamiento
 
-  // Zonas de fondo
-  ctx.fillStyle="rgba(255,50,50,.06)"; ctx.fillRect(0,padTop,w,Math.max(0,yp(rmax)-padTop));
-  ctx.fillStyle="rgba(0,200,120,.10)"; ctx.fillRect(0,yp(rmax),w,Math.max(0,yp(rmin)-yp(rmax)));
-  ctx.fillStyle="rgba(255,170,0,.06)"; ctx.fillRect(0,yp(rmin),w,Math.max(0,h-padBottom-yp(rmin)));
+  // Zona calentamiento (fondo gris oscuro)
+  if(warmupX>0){
+    ctx.fillStyle="rgba(80,80,100,.18)"; ctx.fillRect(0,padTop,warmupX,h-padBottom-padTop);
+  }
+
+  // Zonas de fondo (solo en zona estable)
+  const fondoX=warmupX>0?warmupX:0;
+  ctx.fillStyle="rgba(255,50,50,.06)"; ctx.fillRect(fondoX,padTop,w-fondoX,Math.max(0,yp(rmax)-padTop));
+  ctx.fillStyle="rgba(0,200,120,.10)"; ctx.fillRect(fondoX,yp(rmax),w-fondoX,Math.max(0,yp(rmin)-yp(rmax)));
+  ctx.fillStyle="rgba(255,170,0,.06)"; ctx.fillRect(fondoX,yp(rmin),w-fondoX,Math.max(0,h-padBottom-yp(rmin)));
 
   // Líneas guía horizontales
   ctx.strokeStyle="rgba(200,230,255,.13)"; ctx.lineWidth=1; ctx.setLineDash([5,7]);
   (graficaData.niveles||[]).forEach(n=>{ const yy=yp(Number(n)); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(w,yy); ctx.stroke(); });
   ctx.setLineDash([]);
 
-  // Rango ganador
+  // Rango ganador (solo en zona estable)
   ctx.strokeStyle="rgba(0,200,120,.35)"; ctx.lineWidth=1;
-  [rmin,rmax].forEach(n=>{ const yy=yp(Number(n)); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(w,yy); ctx.stroke(); });
+  [rmin,rmax].forEach(n=>{ const yy=yp(Number(n)); ctx.beginPath(); ctx.moveTo(Math.max(0,warmupX),yy); ctx.lineTo(w,yy); ctx.stroke(); });
+
+  // Línea vertical de calentamiento
+  if(warmupX>0){
+    ctx.strokeStyle="rgba(200,200,100,.55)"; ctx.lineWidth=1.5; ctx.setLineDash([4,5]);
+    ctx.beginPath(); ctx.moveTo(warmupX,padTop); ctx.lineTo(warmupX,h-padBottom); ctx.stroke(); ctx.setLineDash([]);
+    ctx.font="bold 10px monospace"; ctx.textAlign="left";
+    ctx.fillStyle="rgba(5,7,10,.72)"; ctx.fillRect(warmupX+3,padTop+2,95,16);
+    ctx.fillStyle="rgba(200,200,100,.90)"; ctx.fillText("◀ CALENTAMIENTO",warmupX+5,padTop+13);
+  }
 
   // Cuántos puntos dibujar (animación)
   const drawCount=Math.max(1,Math.round(prog*puntos.length));
@@ -1263,12 +1291,27 @@ function dibujarGrafica(prog){
 
   // Curva principal con clip de animación
   ctx.save(); ctx.beginPath(); ctx.rect(0,0,xp(drawCount-1)+espacioPuntos,h); ctx.clip();
-  ctx.strokeStyle="rgba(0,180,255,.95)"; ctx.lineWidth=2.5; ctx.beginPath();
-  puntos.slice(0,drawCount).forEach((p,i)=>{
-    const xx=xp(i), yy=yp(Number(p.score_ganador||0));
-    i===0?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
-  });
-  ctx.stroke();
+
+  // Tramo calentamiento (gris tenue)
+  if(warmupN>1 && drawCount>1){
+    const limWU=Math.min(warmupN+1,drawCount);
+    ctx.strokeStyle="rgba(140,140,180,.45)"; ctx.lineWidth=2; ctx.beginPath();
+    puntos.slice(0,limWU).forEach((p,i)=>{
+      const xx=xp(i), yy=yp(Number(p.score_ganador||0));
+      i===0?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
+    });
+    ctx.stroke();
+  }
+  // Tramo estable (azul normal)
+  if(drawCount>warmupN){
+    ctx.strokeStyle="rgba(0,180,255,.95)"; ctx.lineWidth=2.5; ctx.beginPath();
+    puntos.slice(warmupN,drawCount).forEach((p,i)=>{
+      const ii=warmupN+i;
+      const xx=xp(ii), yy=yp(Number(p.score_ganador||0));
+      i===0?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
+    });
+    ctx.stroke();
+  }
 
   // Moving Averages
   function drawMA(ventana,color,dash){
@@ -1351,10 +1394,17 @@ function dibujarGrafica(prog){
   // Puntos coloreados
   puntos.slice(0,drawCount).forEach((p,i)=>{
     const sc=Number(p.score_ganador||0), xx=xp(i), yy=yp(sc);
-    let color=sc>rmax?"rgba(255,70,70,1)":sc<rmin?"rgba(255,200,0,1)":"rgba(0,200,120,1)";
-    if(p.pendiente_memoria) color="rgba(255,255,255,1)";
+    let color;
+    if(i<warmupN){
+      // calentamiento: puntos grises semitransparentes
+      color="rgba(150,150,180,.50)";
+    } else if(p.pendiente_memoria){
+      color="rgba(255,255,255,1)";
+    } else {
+      color=sc>rmax?"rgba(255,70,70,1)":sc<rmin?"rgba(255,200,0,1)":"rgba(0,200,120,1)";
+    }
     ctx.fillStyle=color; ctx.beginPath();
-    const r=i===puntos.length-1?7:3.5;
+    const r=i===puntos.length-1?7:(i<warmupN?2.5:3.5);
     ctx.arc(xx,yy,r,0,Math.PI*2); ctx.fill();
     if(i===puntos.length-1){
       ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.lineWidth=2;
@@ -1375,7 +1425,7 @@ function dibujarGrafica(prog){
   });
 
   document.getElementById("grafica-info").textContent=
-    `${graficaData.total} puntos · sep:${espacioPuntos} · rango:${graficaData.rango_min}-${graficaData.rango_max} · tend:${graficaData.tendencia||""} · brecha:${graficaData.brecha_min||0}-${graficaData.brecha_max||0}`;
+    `${graficaData.total} puntos · calent:${warmupN} · sep:${espacioPuntos} · rango estable:${graficaData.rango_min}-${graficaData.rango_max} · tend:${graficaData.tendencia||""}`;
 
   // Click/touch para tooltip
   canvas.onclick=function(ev){
