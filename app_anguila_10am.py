@@ -1462,8 +1462,13 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div class="card-title" style="color:#c084fc;">🪞 ESPEJOS HISTÓRICOS — Día D → 10AM D+1</div>
   <div style="font-size:11px;color:#4a7fa0;margin-bottom:10px;" id="esp-meta">—</div>
   <div style="margin-bottom:14px;">
-    <div style="font-size:12px;color:#f59e0b;margin-bottom:4px;font-weight:bold;letter-spacing:1px;">⚡ CANDIDATOS HOY — salieron ayer en Anguilla, rankeados por fuerza histórica:</div>
-    <div style="font-size:10px;color:#4a7fa0;margin-bottom:6px;">Verde ✅ = ya confirmado hoy · Barra = % de fuerza vs el #1 histórico · ⚡🔥 = apareció varias veces ayer</div>
+    <div style="font-size:12px;color:#f59e0b;margin-bottom:4px;font-weight:bold;letter-spacing:1px;">⚡ CANDIDATOS HOY — salieron ayer en Anguilla:</div>
+    <div style="font-size:10px;color:#4a7fa0;margin-bottom:8px;">Verde ✅ = confirmado hoy · Barra = fuerza histórica · ⏰ = a qué hora suele repetir</div>
+    <!-- Filtro por hora -->
+    <div style="margin-bottom:8px;">
+      <div style="font-size:11px;color:#6a8fa0;margin-bottom:5px;">🕐 Filtrar por hora del próximo sorteo:</div>
+      <div id="esp-hora-filtros" style="display:flex;gap:5px;flex-wrap:wrap;"></div>
+    </div>
     <div id="esp-candidatos" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
   </div>
   <div>
@@ -1752,7 +1757,10 @@ async function cargarEspejos(){
   }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
 }
 
+let _espData=null; // guarda datos para re-filtrar sin nueva llamada al server
+
 function pintarEspejos(d){
+  _espData=d;
   const card=document.getElementById("card-espejos");
   card.classList.remove("hidden");
   const conf=d.confirmados_hoy||0;
@@ -1761,47 +1769,36 @@ function pintarEspejos(d){
     `${d.total_candidatos} candidatos de ayer · `+
     (conf>0?`✅ ${conf} confirmados hoy · `:`sin confirmaciones aún · `)+d.generado;
 
+  // ── Construir botones de hora dinámicamente desde los datos ──────────────
+  const filtrosDiv=document.getElementById("esp-hora-filtros");
+  filtrosDiv.innerHTML="";
+  // Recolectar todas las horas que aparecen en horas_rep de candidatos
+  const horasSet=new Set();
+  (d.candidatos_hoy||[]).forEach(c=>(c.horas_rep||[]).forEach(h=>horasSet.add(h.hora)));
+  // Ordenar horas cronológicamente
+  const ordenHora=h=>{
+    const m=h.match(/(\d+)(AM|PM)/i);
+    if(!m) return 99;
+    let hr=parseInt(m[1]);
+    if(m[2].toUpperCase()==="PM"&&hr!==12) hr+=12;
+    if(m[2].toUpperCase()==="AM"&&hr===12) hr=0;
+    return hr;
+  };
+  const horasOrdenadas=["TODAS",...Array.from(horasSet).sort((a,b)=>ordenHora(a)-ordenHora(b))];
+  horasOrdenadas.forEach(hora=>{
+    const btn=document.createElement("button");
+    btn.textContent=hora==="TODAS"?"🔄 Todas":hora;
+    btn.dataset.hora=hora;
+    btn.style.cssText=`background:#0b1624;border:1px solid #1e3350;color:#6ab0d0;border-radius:7px;`+
+      `padding:6px 11px;font-size:12px;font-weight:bold;cursor:pointer;transition:all .15s;`;
+    btn.onclick=()=>filtrarEspejosPorHora(hora,btn);
+    filtrosDiv.appendChild(btn);
+  });
+
   // ── TODOS los candidatos de ayer, ordenados por score ────────────────────
   const candDiv=document.getElementById("esp-candidatos");
-  candDiv.innerHTML="";
-  if(!(d.candidatos_hoy||[]).length){
-    candDiv.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin datos Anguilla ayer — carga la Biblia primero</div>';
-  } else {
-    (d.candidatos_hoy||[]).forEach((c,i)=>{
-      const tot=c.total_ayer||1;
-      const pctH=c.score_hist_pct||0;
-      const conf=c.confirmado_hoy;
-      const rank=c.rank_hist||99;
-      const calor=conf?"#00ff88":rank<=10?"#ffd700":rank<=25?"#f59e0b":rank<=50?"#00d4ff":"#6a8fa0";
-      const borde=conf?"3px solid #00ff88":`1.5px solid ${calor}55`;
-      const glow=conf?"box-shadow:0 0 14px #00ff8866;":"";
-      const llama=tot>=4?"🔥🔥":tot>=3?"🔥":tot>=2?"⚡":"";
-      const posHtml=(c.posiciones_ayer||[]).map(p=>{
-        const col=p.pos==="1ra"?"#00e090":p.pos==="2da"?"#00d4ff":"#ffaa00";
-        return `<span style="background:#0a1525;border:1px solid ${col}55;border-radius:4px;padding:1px 5px;font-size:9px;color:${col};">${p.pos}×${p.veces}</span>`;
-      }).join(" ");
-      const confLabel=conf
-        ?`<div style="font-size:10px;color:#00ff88;font-weight:bold;margin-top:3px;">✅ ${(c.confirmado_sorteos||[]).join(" · ")}</div>`:"";
-      // Horas donde tiende a repetir históricamente
-      const horasHtml=(c.horas_rep||[]).slice(0,4).map((h,hi)=>{
-        const hcol=hi===0?"#f59e0b":hi===1?"#00d4ff":hi===2?"#c084fc":"#4a7fa0";
-        return `<div style="background:#080f1a;border:1px solid ${hcol}55;border-radius:5px;padding:2px 5px;font-size:9px;color:${hcol};white-space:nowrap;">${h.hora}<span style="color:#4a7fa0;"> ${h.veces}×</span></div>`;
-      }).join("");
-      const horasBloque=horasHtml
-        ?`<div style="margin-top:5px;"><div style="font-size:8px;color:#4a7fa0;margin-bottom:2px;">⏰ repite en:</div><div style="display:flex;flex-wrap:wrap;gap:2px;justify-content:center;">${horasHtml}</div></div>`:"";
-      const el=document.createElement("div");
-      el.style.cssText=`background:#04080f;border:${borde};border-radius:12px;padding:10px 10px;text-align:center;min-width:76px;${glow}`;
-      el.innerHTML=
-        `<div style="font-size:9px;color:${calor};font-weight:bold;">${llama}#${rank}</div>`+
-        `<div style="font-size:34px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;margin:2px 0;">${c.numero}</div>`+
-        `<div style="height:3px;background:#1e3350;border-radius:2px;margin:3px 0;"><div style="height:100%;width:${pctH}%;background:${calor};border-radius:2px;"></div></div>`+
-        `<div style="font-size:10px;color:${calor};font-weight:bold;">${pctH.toFixed(0)}% fza</div>`+
-        `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin:3px 0;">${posHtml}</div>`+
-        `<div style="font-size:9px;color:#4a7fa0;">${c.f1||0}×1 ${c.f2||0}×2 ${c.f3||0}×3</div>`+
-        horasBloque+confLabel;
-      candDiv.appendChild(el);
-    });
-  }
+  // Render inicial con "Todas" (delega a filtrarEspejosPorHora)
+  filtrarEspejosPorHora("TODAS", document.querySelector("#esp-hora-filtros button"));
 
   // ── TOP 20 ranking histórico de fuerza de los 100 números ────────────────
   const tabDiv=document.getElementById("esp-tabla");
@@ -1824,6 +1821,76 @@ function pintarEspejos(d){
   });
 
   card.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+function filtrarEspejosPorHora(horaFiltro, btnActivo){
+  if(!_espData) return;
+  // Resaltar botón activo
+  document.querySelectorAll("#esp-hora-filtros button").forEach(b=>{
+    b.style.background="#0b1624"; b.style.borderColor="#1e3350"; b.style.color="#6ab0d0";
+  });
+  if(btnActivo){
+    btnActivo.style.background="#1e3350"; btnActivo.style.borderColor="#00d4ff";
+    btnActivo.style.color="#00d4ff";
+  }
+  const candDiv=document.getElementById("esp-candidatos");
+  candDiv.innerHTML="";
+  let lista=[...(_espData.candidatos_hoy||[])];
+  if(horaFiltro!=="TODAS"){
+    // Filtrar: solo candidatos con al menos 1 confirmación en esa hora
+    lista=lista.filter(c=>(c.horas_rep||[]).some(h=>h.hora===horaFiltro));
+    // Reordenar: primero por veces confirmado en esa hora, luego por score
+    lista.sort((a,b)=>{
+      const va=(a.horas_rep||[]).find(h=>h.hora===horaFiltro)?.veces||0;
+      const vb=(b.horas_rep||[]).find(h=>h.hora===horaFiltro)?.veces||0;
+      if(vb!==va) return vb-va;
+      return b.score_cand-a.score_cand;
+    });
+  }
+  if(lista.length===0){
+    candDiv.innerHTML=`<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin candidatos con historial en ${horaFiltro}</div>`;
+    return;
+  }
+  lista.forEach((c,i)=>{
+    const tot=c.total_ayer||1;
+    const pctH=c.score_hist_pct||0;
+    const conf=c.confirmado_hoy;
+    const rank=c.rank_hist||99;
+    const calor=conf?"#00ff88":rank<=10?"#ffd700":rank<=25?"#f59e0b":rank<=50?"#00d4ff":"#6a8fa0";
+    const borde=conf?"3px solid #00ff88":`1.5px solid ${calor}55`;
+    const glow=conf?"box-shadow:0 0 14px #00ff8866;":"";
+    const llama=tot>=4?"🔥🔥":tot>=3?"🔥":tot>=2?"⚡":"";
+    const posHtml=(c.posiciones_ayer||[]).map(p=>{
+      const col=p.pos==="1ra"?"#00e090":p.pos==="2da"?"#00d4ff":"#ffaa00";
+      return `<span style="background:#0a1525;border:1px solid ${col}55;border-radius:4px;padding:1px 5px;font-size:9px;color:${col};">${p.pos}×${p.veces}</span>`;
+    }).join(" ");
+    // Hora seleccionada destacada
+    const horasHtml=(c.horas_rep||[]).slice(0,4).map((h,hi)=>{
+      const activa=h.hora===horaFiltro&&horaFiltro!=="TODAS";
+      const hcol=activa?"#00ff88":hi===0?"#f59e0b":hi===1?"#00d4ff":"#4a7fa0";
+      const bg=activa?"background:#001a0a;border-color:#00ff8888;":"";
+      return `<div style="background:#080f1a;border:1px solid ${hcol}55;border-radius:5px;padding:2px 5px;font-size:9px;color:${hcol};white-space:nowrap;${bg}">${h.hora}<span style="color:#4a7fa0;"> ${h.veces}×</span></div>`;
+    }).join("");
+    const horasBloque=horasHtml
+      ?`<div style="margin-top:5px;"><div style="font-size:8px;color:#4a7fa0;margin-bottom:2px;">⏰ repite en:</div><div style="display:flex;flex-wrap:wrap;gap:2px;justify-content:center;">${horasHtml}</div></div>`:"";
+    const confLabel=conf
+      ?`<div style="font-size:10px;color:#00ff88;font-weight:bold;margin-top:3px;">✅ ${(c.confirmado_sorteos||[]).join(" · ")}</div>`:"";
+    // Veces en la hora seleccionada (destacado arriba si hay filtro)
+    const vecesHoraLabel=horaFiltro!=="TODAS"
+      ?`<div style="font-size:10px;color:#00ff88;font-weight:bold;margin-bottom:1px;">${(c.horas_rep||[]).find(h=>h.hora===horaFiltro)?.veces||0}× en ${horaFiltro}</div>`:"";
+    const el=document.createElement("div");
+    el.style.cssText=`background:#04080f;border:${borde};border-radius:12px;padding:10px 10px;text-align:center;min-width:76px;${glow}`;
+    el.innerHTML=
+      vecesHoraLabel+
+      `<div style="font-size:9px;color:${calor};font-weight:bold;">${llama}#${rank}</div>`+
+      `<div style="font-size:34px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;margin:2px 0;">${c.numero}</div>`+
+      `<div style="height:3px;background:#1e3350;border-radius:2px;margin:3px 0;"><div style="height:100%;width:${pctH}%;background:${calor};border-radius:2px;"></div></div>`+
+      `<div style="font-size:10px;color:${calor};font-weight:bold;">${pctH.toFixed(0)}% fza</div>`+
+      `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin:3px 0;">${posHtml}</div>`+
+      `<div style="font-size:9px;color:#4a7fa0;">${c.f1||0}×1 ${c.f2||0}×2 ${c.f3||0}×3</div>`+
+      horasBloque+confLabel;
+    candDiv.appendChild(el);
+  });
 }
 
 // ═══════════════════════════════════════════
