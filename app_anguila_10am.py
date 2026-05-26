@@ -973,6 +973,9 @@ def combo_anguila():
         nombre_obj=nombre_objetivo_en_biblia(registros)
         if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
         if aprendizaje["corriendo"]: return jsonify({"error":"Aprendizaje corriendo"})
+        _,por_fecha,_=preparar_indices(registros)
+        hoy=datetime.now().strftime("%Y-%m-%d")
+        ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
         # ── Motor V5 ──────────────────────────────────────────────────────────
         ia_data=ia_score_ganador_loteria(nombre_obj)
         top100_v5=ia_data.get("top100_actual",[]) or []
@@ -986,35 +989,92 @@ def combo_anguila():
         max_suc=max((float(x.get("score_suc",0) or 0) for x in top_suc),default=1) or 1
         suc_dict={x["numero"]:x for x in top_suc}
         top_suc_set={x["numero"] for x in top_suc[:20]}
-        # ── Fusión ────────────────────────────────────────────────────────────
+        # ── Motor Espejos (ayer en Anguilla → candidatos hoy) ─────────────────
+        regs_ang=[r for r in registros if es_anguila_cualquiera(r.get("loteria",""))]
+        T_ang=max(len(regs_ang),1)
+        ef1=Counter(); ef2=Counter(); ef3=Counter()
+        for rr in regs_ang:
+            for pos,n in enumerate((rr.get("numeros") or [])[:3]):
+                if not n: continue
+                if pos==0: ef1[n]+=1
+                elif pos==1: ef2[n]+=1
+                elif pos==2: ef3[n]+=1
         nums=[str(i).zfill(2) for i in range(100)]
+        esp_scores={}
+        for n in nums:
+            esp_scores[n]=(ef1[n]/T_ang)*300+(ef2[n]/T_ang)*150+(ef3[n]/T_ang)*80
+        max_esp=max(esp_scores.values()) or 1
+        # Candidatos espejos: salieron ayer en Anguilla
+        nums_ayer_ang=Counter()
+        for rr in por_fecha.get(ayer,[]):
+            if es_anguila_cualquiera(rr.get("loteria","")):
+                for n in (rr.get("numeros") or [])[:3]:
+                    if n: nums_ayer_ang[n]+=1
+        top_esp_set={n for n,_ in nums_ayer_ang.most_common(25)}
+        # ── Predictabilidad por sorteo Anguilla ───────────────────────────────
+        # Para cada sorteo específico (10AM, 11AM, etc.) mide concentración de 1ras
+        pred_sorteo={}
+        for rr in regs_ang:
+            hora=rr.get("loteria","").replace("Anguilla ","").replace("Anguila ","").strip()
+            nn=rr.get("numeros",[])
+            if nn:
+                if hora not in pred_sorteo: pred_sorteo[hora]=Counter()
+                pred_sorteo[hora][nn[0]]+=1
+        predictabilidad=[]
+        for hora,cont in pred_sorteo.items():
+            tot=sum(cont.values()) or 1
+            top5=sum(v for _,v in cont.most_common(5))
+            top10=sum(v for _,v in cont.most_common(10))
+            score_pred=round(top5/tot*100,1)
+            predictabilidad.append({"hora":hora,"total":tot,
+                "concentracion_top5":score_pred,
+                "concentracion_top10":round(top10/tot*100,1)})
+        predictabilidad.sort(key=lambda x:-x["concentracion_top5"])
+        # ── Fusión TRIPLE: V5 + Sucesor + Espejos ────────────────────────────
         combo=[]
         for n in nums:
             v5=v5_dict.get(n,{}); suc=suc_dict.get(n,{})
             prio=float(v5.get("prioridad_v5",0) or 0)
             sc_suc=float(suc.get("score_suc",0) or 0)
             v5_norm=(prio/max_prio)*100
-            suc_norm=sc_suc  # ya 0-100
-            in_both=n in top_v5_set and n in top_suc_set
-            bonus=22 if in_both else 0
-            combo_score=v5_norm*0.55+suc_norm*0.45+bonus
+            suc_norm=sc_suc
+            esp_norm=(esp_scores.get(n,0)/max_esp)*100
+            esp_boost=1.0+(nums_ayer_ang.get(n,0)-1)*0.18 if nums_ayer_ang.get(n,0)>0 else 0
+            esp_activo=n in top_esp_set
+            esp_score_final=esp_norm*esp_boost if esp_activo else 0
+            in_v5=n in top_v5_set; in_suc=n in top_suc_set; in_esp=esp_activo and esp_norm>=40
+            motores_activos=sum([in_v5,in_suc,in_esp])
+            bonus=30 if motores_activos>=3 else (18 if motores_activos==2 else 0)
+            combo_score=v5_norm*0.45+suc_norm*0.30+esp_score_final*0.25+bonus
             if combo_score<=0.5: continue
-            fuente="🎯COMBO" if in_both else ("V5" if n in top_v5_set else ("SUC" if n in top_suc_set else "BASE"))
+            if motores_activos>=3: fuente="🎯COMBO3"
+            elif in_v5 and in_suc: fuente="🎯COMBO"
+            elif in_v5 and in_esp: fuente="🪞+V5"
+            elif in_suc and in_esp: fuente="🪞+SUC"
+            elif in_v5: fuente="V5"
+            elif in_suc: fuente="SUC"
+            elif in_esp: fuente="🪞ESP"
+            else: fuente="BASE"
             combo.append({
                 "numero":n,"combo_score":round(combo_score,4),
                 "score_v5":round(v5_norm,2),"score_suc":round(suc_norm,2),
-                "fuente":fuente,"in_rango_v5":n in top_v5_set,"in_top_suc":n in top_suc_set,
+                "score_esp":round(esp_score_final,2),
+                "esp_veces_ayer":nums_ayer_ang.get(n,0),
+                "fuente":fuente,"in_rango_v5":in_v5,"in_top_suc":in_suc,"in_esp":in_esp,
                 "zona_ia":v5.get("zona_ia",""),"atraso":v5.get("atraso",9999),
                 "razones":v5.get("razones",[])[:4],
                 "freq_lag1":suc.get("freq_lag1",0),"pct_lag1":suc.get("pct_lag1",0),
                 "patron":suc.get("patron","")})
         combo.sort(key=lambda x:x["combo_score"],reverse=True)
         primeras=[r["numeros"][0] for r in regs if r.get("numeros")]
+        mejor_pred=predictabilidad[0] if predictabilidad else {}
         return jsonify({"loteria":nombre_obj,"top_combo":combo[:30],
             "ultimo_numero":ia_data.get("ultimo_numero_ganador",""),
             "ultimos_5":primeras[-5:] if primeras else [],
             "tendencia":ia_data.get("tendencia_ia",""),"confianza":ia_data.get("confianza",0),
             "metricas":ia_data.get("metricas",{}),"rango_ia":ia_data.get("rango_ia",{}),
+            "predictabilidad_sorteos":predictabilidad[:8],
+            "mejor_sorteo_predecible":mejor_pred,
             "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
     except Exception as e: return jsonify({"error":str(e)})
 
@@ -1467,7 +1527,7 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
     <!-- Filtro por hora -->
     <div style="margin-bottom:8px;">
       <div style="font-size:11px;color:#6a8fa0;margin-bottom:5px;">🕐 Filtrar por hora del próximo sorteo:</div>
-      <div id="esp-hora-filtros" style="display:flex;gap:5px;flex-wrap:wrap;"></div>
+      <div id="esp-hora-filtros" style="display:flex;gap:5px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:6px;-webkit-overflow-scrolling:touch;scrollbar-width:thin;"></div>
     </div>
     <div id="esp-candidatos" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
   </div>
@@ -1645,31 +1705,69 @@ function pintarCombo(d){
     sp.textContent=n;
     bRow.appendChild(sp);
   });
+  // ── Predictabilidad por sorteo ────────────────────────────────────────────
+  const preds=d.predictabilidad_sorteos||[];
+  if(preds.length>0){
+    const mejor=d.mejor_sorteo_predecible||preds[0];
+    const predHtml=preds.slice(0,6).map((p,i)=>{
+      const col=i===0?"#00ff88":i<3?"#f59e0b":"#4a7fa0";
+      const w=Math.round(p.concentracion_top5);
+      return `<div style="background:#04080f;border:1px solid ${col}44;border-radius:8px;padding:6px 8px;text-align:center;min-width:70px;flex-shrink:0;">
+        <div style="font-size:10px;color:${col};font-weight:bold;">${p.hora}</div>
+        <div style="height:3px;background:#1e3350;border-radius:2px;margin:3px 0;"><div style="height:100%;width:${w}%;background:${col};border-radius:2px;"></div></div>
+        <div style="font-size:11px;color:${col};font-weight:bold;">${p.concentracion_top5}%</div>
+        <div style="font-size:8px;color:#4a7fa0;">${p.total} sorteos</div>
+      </div>`;
+    }).join("");
+    bRow.insertAdjacentHTML("beforeend",
+      `<div style="width:100%;margin-top:8px;">
+        <div style="font-size:11px;color:#00ff88;font-weight:bold;margin-bottom:5px;">
+          🎯 SORTEO MÁS PREDECIBLE: ${mejor.hora} (${mejor.concentracion_top5}% top5)
+          ${mejor.hora==="10AM"?"← ¡Es el 10AM! Jugada segura":"← Considera jugar este también"}
+        </div>
+        <div style="display:flex;gap:5px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;">
+          ${predHtml}
+        </div>
+      </div>`
+    );
+  }
+  // ── Grid COMBO ────────────────────────────────────────────────────────────
   const grid=document.getElementById("combo-grid");
   grid.innerHTML="";
   (d.top_combo||[]).slice(0,20).forEach((c,i)=>{
-    const isCombo=c.fuente==="🎯COMBO";
-    const rankColor=i===0?"#ffd700":i<3?"#f59e0b":isCombo?"#00d4ff":i<10?"#00e090":"#4a7fa0";
-    const borderStyle=isCombo?"2px solid #f59e0b":"1.5px solid "+rankColor+"55";
+    const isC3=c.fuente==="🎯COMBO3";
+    const isCombo=c.fuente==="🎯COMBO"||isC3;
+    const isEsp=c.fuente?.includes("🪞");
+    const rankColor=i===0?"#ffd700":i<3?"#f59e0b":isC3?"#00ff88":isCombo?"#00d4ff":isEsp?"#c084fc":i<10?"#00e090":"#4a7fa0";
+    const glow=isC3?"box-shadow:0 0 12px #00ff8833;":isCombo?"box-shadow:0 0 10px #f59e0b33;":"";
+    const topBar=isC3
+      ?'<div style="position:absolute;top:-1px;left:0;right:0;height:2px;background:linear-gradient(90deg,#00ff88,#f59e0b,#c084fc);border-radius:10px 10px 0 0;"></div>'
+      :isCombo?'<div style="position:absolute;top:-1px;left:0;right:0;height:2px;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-radius:10px 10px 0 0;"></div>':'';
+    const borderStyle=isC3?"2px solid #00ff88":isCombo?"2px solid #f59e0b":isEsp?"1.5px solid #c084fc55":"1.5px solid "+rankColor+"44";
     const el=document.createElement("div");
-    el.style.cssText=`background:#060b14;border:${borderStyle};border-radius:10px;padding:10px 6px;text-align:center;position:relative;${isCombo?"box-shadow:0 0 10px #f59e0b44;":""}`;
-    const barV=Math.round(c.score_v5);
-    const barS=Math.round(c.score_suc);
-    // Doble barra de progreso V5 vs SUC
+    el.style.cssText=`background:#060b14;border:${borderStyle};border-radius:10px;padding:10px 6px;text-align:center;position:relative;${glow}`;
+    const barV=Math.max(1,Math.round(c.score_v5));
+    const barS=Math.max(1,Math.round(c.score_suc));
+    const barE=Math.max(1,Math.round(c.score_esp||0));
+    const espLabel=c.esp_veces_ayer>0
+      ?`<div style="font-size:8px;color:#c084fc;margin-top:1px;">🪞${c.esp_veces_ayer}× ayer</div>`:"";
     el.innerHTML=`
-      ${isCombo?'<div style="position:absolute;top:-1px;left:0;right:0;height:2px;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-radius:10px 10px 0 0;"></div>':''}
+      ${topBar}
       <div style="font-size:9px;color:${rankColor};margin-bottom:1px;">#${i+1} ${c.fuente}</div>
       <div style="font-size:28px;font-weight:bold;color:#e8f4ff;font-family:monospace;line-height:1.1;">${c.numero}</div>
       <div style="font-size:9px;color:#f59e0b;margin:2px 0;">${c.combo_score.toFixed(1)}pts</div>
-      <div style="display:flex;gap:2px;margin:3px 0;height:4px;border-radius:3px;overflow:hidden;">
-        <div style="flex:${barV};background:#00d4ff;opacity:.8;"></div>
-        <div style="flex:${barS};background:#f59e0b;opacity:.8;"></div>
+      <div style="display:flex;gap:1px;margin:3px 0;height:4px;border-radius:3px;overflow:hidden;">
+        <div style="flex:${barV};background:#00d4ff;opacity:.8;" title="V5"></div>
+        <div style="flex:${barS};background:#f59e0b;opacity:.8;" title="SUC"></div>
+        <div style="flex:${barE};background:#c084fc;opacity:.8;" title="ESP"></div>
       </div>
-      <div style="display:flex;justify-content:center;gap:4px;font-size:8px;color:#4a7fa0;">
+      <div style="display:flex;justify-content:center;gap:3px;font-size:8px;flex-wrap:wrap;">
         <span style="color:#00d4ff;">V5:${c.score_v5.toFixed(0)}</span>
-        <span style="color:#f59e0b;">SUC:${c.score_suc.toFixed(0)}</span>
+        <span style="color:#f59e0b;">S:${c.score_suc.toFixed(0)}</span>
+        <span style="color:#c084fc;">E:${c.score_esp?.toFixed(0)||0}</span>
       </div>
-      ${c.pct_lag1>0?`<div style="font-size:8px;color:#2a4a60;margin-top:2px;">L1:${c.pct_lag1}%</div>`:""}
+      ${espLabel}
+      ${c.pct_lag1>0?`<div style="font-size:8px;color:#2a4a60;margin-top:1px;">L1:${c.pct_lag1}%</div>`:""}
     `;
     grid.appendChild(el);
   });
@@ -1790,7 +1888,7 @@ function pintarEspejos(d){
     btn.textContent=hora==="TODAS"?"🔄 Todas":hora;
     btn.dataset.hora=hora;
     btn.style.cssText=`background:#0b1624;border:1px solid #1e3350;color:#6ab0d0;border-radius:7px;`+
-      `padding:6px 11px;font-size:12px;font-weight:bold;cursor:pointer;transition:all .15s;`;
+      `padding:6px 11px;font-size:12px;font-weight:bold;cursor:pointer;transition:all .15s;flex-shrink:0;white-space:nowrap;`;
     btn.onclick=()=>filtrarEspejosPorHora(hora,btn);
     filtrosDiv.appendChild(btn);
   });
