@@ -200,19 +200,25 @@ def calcular_score_candidatos(hist_lot,fecha_actual,por_fecha):
     for r in ult7: nums_ult7.extend(r.get("numeros",[]))
     for r in ult15: nums_ult15.extend(r.get("numeros",[]))
     c7=Counter(nums_ult7); c15=Counter(nums_ult15)
+    T=max(total_prev,1)  # normalizador — escala fija sin importar cuántos datos
     for n in nums:
         score=0.0; inv=inverso(n)
-        score+=c1[n]*10.0+c2[n]*4.0+c3[n]*2.5
-        score+=c1[inv]*3.5+c2[inv]*1.5+c3[inv]*1.0
+        # ── Frecuencia NORMALIZADA por total (escala siempre igual) ──────────
+        score+=(c1[n]/T)*1000.0+(c2[n]/T)*400.0+(c3[n]/T)*250.0
+        score+=(c1[inv]/T)*350.0+(c2[inv]/T)*150.0+(c3[inv]/T)*100.0
+        # ── Recencia (ventanas fijas 7/15 — no crece con el tiempo) ──────────
         score+=c7[n]*8.0+c15[n]*4.0+c7[inv]*3.0
+        # ── Ayer global (acotado por cantidad de loterías del día) ────────────
         score+=conteo_ayer[n]*12.0+conteo_ayer[inv]*5.0
+        # ── Atraso (bonus/penalidad fija) ─────────────────────────────────────
         atraso=(total_prev-1)-ultimo_idx[n] if n in ultimo_idx else total_prev+20
         if 5<=atraso<=28: score+=35.0
         elif 29<=atraso<=60: score+=18.0
         elif atraso<=2: score-=18.0
         elif atraso>160: score-=10.0
-        freq=c1[n]
-        if media_freq>0 and freq>media_freq*2.8 and atraso<=7: score-=25.0
+        # ── Quemado: más del doble de frecuencia esperada y muy reciente ──────
+        freq_rate=c1[n]/T
+        if freq_rate>0.028 and atraso<=7: score-=25.0  # 2.8× la freq esperada (1/100=0.01)
         candidatos[n]=round(score,4)
     return candidatos
 
@@ -516,7 +522,8 @@ def estadisticas_1ra_v5(loteria,registros_biblia):
                 if ns and str(ns[0]).zfill(2)[-2:]==n: last_idx=i; break
             st["atraso_1ra"]=(total_regs-1-last_idx) if last_idx is not None else 9999
         else: st["atraso_1ra"]=9999
-        score=0.0; score+=f1*2.20; score+=st["rec_1ra_15"]*22.0; score+=st["rec_1ra_30"]*12.0; score+=st["rec_1ra_60"]*5.0; score+=share*55.0
+        # f1 normalizado: (f1/total_regs)*220 → escala ~2.2 sin importar cuántos datos
+        score=0.0; score+=(f1/max(total_regs,1))*220.0; score+=st["rec_1ra_15"]*22.0; score+=st["rec_1ra_30"]*12.0; score+=st["rec_1ra_60"]*5.0; score+=share*55.0
         atraso=st["atraso_1ra"]
         if 5<=atraso<=32: score+=38.0
         elif 33<=atraso<=75: score+=24.0
