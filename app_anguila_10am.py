@@ -494,12 +494,12 @@ def construir_matrices_transicion(primeras):
     """
     T=len(primeras)
     trans={1:defaultdict(Counter),2:defaultdict(Counter),
-           3:defaultdict(Counter),5:defaultdict(Counter)}
+           3:defaultdict(Counter),4:defaultdict(Counter),5:defaultdict(Counter)}
     trans_dec=defaultdict(Counter)
     for i in range(T):
         n=primeras[i]
         dec=str(int(n)//10)
-        for lag in [1,2,3,5]:
+        for lag in [1,2,3,4,5]:
             if i+lag<T:
                 suc=primeras[i+lag]
                 trans[lag][n][suc]+=1
@@ -525,7 +525,7 @@ def predecir_sucesor(hist_lot_sorted,ventana=8):
     scores=Counter()
 
     # Pesos por lag: cuanto más reciente el "disparador", mayor peso
-    pesos_lag={1:1.0, 2:0.50, 3:0.25, 5:0.10}
+    pesos_lag={1:1.0, 2:0.50, 3:0.25, 4:0.15, 5:0.10}
 
     for pos_back,num in enumerate(reversed(ultimos)):
         lag_aplicado=pos_back+1  # este número está a lag_aplicado sorteos del próximo
