@@ -1059,84 +1059,104 @@ def mismo_dia_anguila():
 
 @app.route("/espejos_anguila")
 def espejos_anguila():
-    """Motor de Espejos: números que salieron en 1ra de Anguilla día D
-    y repitieron en 1ra del 10AM el día D+1. Analiza toda la Biblia."""
+    """Motor de Espejos: números en 1ra+2da+3ra de TODOS los sorteos
+    Anguilla del día D que repiten en 1ra de cualquier Anguilla día D+1.
+    Analiza todos los pares consecutivos en la Biblia."""
     try:
         _,registros,_=leer_toda_biblia()
         nombre_obj=nombre_objetivo_en_biblia(registros)
         if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
         _,por_fecha,_=preparar_indices(registros)
         fechas_sorted=sorted(por_fecha.keys())
-        # ── Construir tabla de espejos ────────────────────────────────────────
-        apariciones=Counter()   # cuántas veces n apareció en 1ra de Anguilla ayer
-        repetidos=Counter()     # de esas, cuántas veces n salió en 1ra de 10AM hoy
+        # ── Matrices por posición de origen ──────────────────────────────────
+        # ap_pos[p][n]  = veces que n apareció en posición p de Anguilla en día D
+        # rep_pos[p][n] = de esas, cuántas veces n salió en 1ra de Anguilla D+1
+        ap_pos={0:Counter(),1:Counter(),2:Counter()}
+        rep_pos={0:Counter(),1:Counter(),2:Counter()}
+        ap_total=Counter()   # cualquier posición día D
+        rep_total=Counter()  # → 1ra de Anguilla día D+1
         dias_analizados=0
         for i in range(len(fechas_sorted)-1):
-            fecha_d   = fechas_sorted[i]
-            fecha_d1  = fechas_sorted[i+1]
-            # Solo días consecutivos (D y D+1)
+            fecha_d  = fechas_sorted[i]
+            fecha_d1 = fechas_sorted[i+1]
             try:
                 dd  = datetime.strptime(fecha_d,  "%Y-%m-%d")
                 dd1 = datetime.strptime(fecha_d1, "%Y-%m-%d")
                 if (dd1-dd).days != 1: continue
             except: continue
-            # Números en 1ra de todos los sorteos Anguilla en el día D
-            nums_1ra_d=set()
+            # Números por posición en todos los sorteos Anguilla del día D
+            nums_d={0:set(),1:set(),2:set()}
             for rr in por_fecha.get(fecha_d,[]):
                 if es_anguila_cualquiera(rr.get("loteria","")):
-                    nums=rr.get("numeros",[])
-                    if nums: nums_1ra_d.add(nums[0])
-            if not nums_1ra_d: continue
-            # 1ra del 10AM en el día D+1
-            ganador_10am=None
+                    for pos,n in enumerate((rr.get("numeros") or [])[:3]):
+                        if n: nums_d[pos].add(n)
+            todos_d=nums_d[0]|nums_d[1]|nums_d[2]
+            if not todos_d: continue
+            # 1ras de TODOS los sorteos Anguilla del día D+1
+            nums_1ra_d1=set()
             for rr in por_fecha.get(fecha_d1,[]):
-                if es_objetivo(rr.get("loteria","")):
-                    nums=rr.get("numeros",[])
-                    if nums: ganador_10am=nums[0]; break
-            if not ganador_10am: continue
+                if es_anguila_cualquiera(rr.get("loteria","")):
+                    nn=rr.get("numeros",[])
+                    if nn: nums_1ra_d1.add(nn[0])
+            if not nums_1ra_d1: continue
             dias_analizados+=1
-            for n in nums_1ra_d:
-                apariciones[n]+=1
-                if n==ganador_10am:
-                    repetidos[n]+=1
-        # ── Tabla de espejos (mínimo 8 apariciones para ser confiable) ────────
-        MIN_AP=8
+            for pos in [0,1,2]:
+                for n in nums_d[pos]:
+                    ap_pos[pos][n]+=1
+                    if n in nums_1ra_d1: rep_pos[pos][n]+=1
+            for n in todos_d:
+                ap_total[n]+=1
+                if n in nums_1ra_d1: rep_total[n]+=1
+        # ── Tabla de espejos (mínimo 10 apariciones) ─────────────────────────
+        MIN_AP=10
         tabla=[]
         for n in [str(i).zfill(2) for i in range(100)]:
-            ap=apariciones[n]
+            ap=ap_total[n]
             if ap<MIN_AP: continue
-            rep=repetidos[n]
-            tasa=rep/ap
+            rep=rep_total[n]; tasa=rep/ap
+            # Tasa por posición de origen
+            rates={}
+            for pos,lbl in [(0,"1ra"),(1,"2da"),(2,"3ra")]:
+                a=ap_pos[pos][n]; r=rep_pos[pos][n]
+                rates[lbl]={"ap":a,"rep":r,"pct":round(r/a*100,1) if a>=5 else None}
             tabla.append({"numero":n,"apariciones":ap,"repetidos":rep,
-                          "tasa":round(tasa,4),"pct":round(tasa*100,1)})
+                          "tasa":round(tasa,4),"pct":round(tasa*100,1),
+                          "por_posicion":rates})
         tabla.sort(key=lambda x:-x["tasa"])
-        # ── Candidatos de hoy (números en 1ra Anguilla ayer) ─────────────────
+        # ── Candidatos de hoy: todos los números (1ra+2da+3ra) Anguilla ayer ─
         hoy=datetime.now().strftime("%Y-%m-%d")
         ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
-        nums_ayer_1ra={}
+        nums_ayer_bypos={0:{},1:{},2:{}}
         for rr in por_fecha.get(ayer,[]):
             if es_anguila_cualquiera(rr.get("loteria","")):
-                nums=rr.get("numeros",[])
-                if nums:
-                    n=nums[0]
-                    nombre_sorteo=rr.get("loteria","")
-                    if n not in nums_ayer_1ra: nums_ayer_1ra[n]=[]
-                    nums_ayer_1ra[n].append(nombre_sorteo)
+                sname=rr.get("loteria","")
+                for pos,n in enumerate((rr.get("numeros") or [])[:3]):
+                    if n:
+                        if n not in nums_ayer_bypos[pos]: nums_ayer_bypos[pos][n]=[]
+                        nums_ayer_bypos[pos][n].append(sname)
+        todos_ayer=set()
+        for pos in [0,1,2]: todos_ayer.update(nums_ayer_bypos[pos].keys())
         candidatos_hoy=[]
-        for n,sorteos in nums_ayer_1ra.items():
+        for n in todos_ayer:
             esp=next((x for x in tabla if x["numero"]==n),None)
+            posiciones=[]
+            for pos,lbl in [(0,"1ra"),(1,"2da"),(2,"3ra")]:
+                if n in nums_ayer_bypos[pos]:
+                    posiciones.append({"pos":lbl,"veces":len(nums_ayer_bypos[pos][n]),
+                                       "sorteos":[s.replace("Anguilla ","").replace("Anguila ","") for s in nums_ayer_bypos[pos][n][:5]]})
             candidatos_hoy.append({
-                "numero":n,"sorteos_ayer":sorteos[:6],
-                "veces_ayer":len(sorteos),
+                "numero":n,"posiciones_ayer":posiciones,
+                "total_apariciones_ayer":sum(p["veces"] for p in posiciones),
                 "tasa":esp["tasa"] if esp else 0,
                 "pct":esp["pct"] if esp else 0,
                 "apariciones":esp["apariciones"] if esp else 0,
                 "repetidos":esp["repetidos"] if esp else 0,
+                "por_posicion":esp["por_posicion"] if esp else {},
                 "en_tabla":esp is not None
             })
-        candidatos_hoy.sort(key=lambda x:(-x["veces_ayer"],-x["tasa"]))
+        candidatos_hoy.sort(key=lambda x:(-x["total_apariciones_ayer"],-x["tasa"]))
         return jsonify({
-            "tabla_espejos":tabla[:25],
+            "tabla_espejos":tabla[:30],
             "candidatos_hoy":candidatos_hoy,
             "dias_analizados":dias_analizados,
             "ayer":ayer,"hoy":hoy,
@@ -1713,26 +1733,33 @@ function pintarEspejos(d){
   const card=document.getElementById("card-espejos");
   card.classList.remove("hidden");
   document.getElementById("esp-meta").textContent=
-    `📊 ${d.dias_analizados} días analizados · Ayer: ${d.ayer} · ${d.generado}`;
+    `📊 ${d.dias_analizados} días analizados (pares D→D+1) · Ayer: ${d.ayer} · ${d.generado}`;
 
-  // ── Candidatos de hoy (los que estuvieron en 1ra Anguilla ayer) ──────────
+  // ── Candidatos de HOY: números que estuvieron en Anguilla ayer (1ra+2da+3ra)
   const candDiv=document.getElementById("esp-candidatos");
   candDiv.innerHTML="";
   const cands=d.candidatos_hoy||[];
   if(cands.length===0){
-    candDiv.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin datos de ayer (carga primero la Biblia de ayer)</div>';
+    candDiv.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin datos de Anguilla ayer</div>';
   } else {
     cands.forEach(c=>{
       const pct=c.pct||0;
-      const calor=pct>=25?"#ff3300":pct>=18?"#ff8800":pct>=12?"#f59e0b":pct>=7?"#00d4ff":"#4a7fa0";
-      const estrella=c.veces_ayer>=3?"🔥":c.veces_ayer>=2?"⚡":"";
+      const tot=c.total_apariciones_ayer||1;
+      const calor=pct>=25?"#ff2200":pct>=18?"#ff7700":pct>=12?"#f59e0b":pct>=7?"#c084fc":"#4a7fa0";
+      const llama=tot>=5?"🔥🔥":tot>=3?"🔥":tot>=2?"⚡":"";
+      // Línea de posiciones de ayer
+      const posHtml=(c.posiciones_ayer||[]).map(p=>{
+        const col=p.pos==="1ra"?"#00e090":p.pos==="2da"?"#00d4ff":"#ffaa00";
+        return `<span style="background:#0a1525;border:1px solid ${col}44;border-radius:4px;padding:1px 4px;font-size:9px;color:${col};">${p.pos}×${p.veces}</span>`;
+      }).join(" ");
       const el=document.createElement("div");
-      el.style.cssText=`background:#0d0520;border:2px solid ${calor};border-radius:12px;padding:10px 12px;text-align:center;min-width:74px;box-shadow:0 0 8px ${calor}44;`;
+      el.style.cssText=`background:#0d0520;border:2px solid ${calor};border-radius:12px;padding:10px 10px;text-align:center;min-width:78px;box-shadow:0 0 10px ${calor}33;`;
       el.innerHTML=
-        `<div style="font-size:10px;color:${calor};font-weight:bold;">${estrella}${c.veces_ayer}× ayer</div>`+
-        `<div style="font-size:32px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;">${c.numero}</div>`+
-        `<div style="font-size:13px;color:${calor};font-weight:bold;margin-top:2px;">${pct.toFixed(1)}%</div>`+
-        `<div style="font-size:9px;color:#4a7fa0;margin-top:2px;">${c.repetidos||0}/${c.apariciones||0} hist</div>`;
+        `<div style="font-size:10px;color:${calor};font-weight:bold;margin-bottom:2px;">${llama}${tot}× ayer</div>`+
+        `<div style="font-size:34px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;">${c.numero}</div>`+
+        `<div style="font-size:14px;color:${calor};font-weight:bold;margin:3px 0;">${pct>0?pct.toFixed(1)+"%":"—"}</div>`+
+        `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin-bottom:3px;">${posHtml}</div>`+
+        `<div style="font-size:9px;color:#4a7fa0;">${c.repetidos||0}/${c.apariciones||0} hist</div>`;
       candDiv.appendChild(el);
     });
   }
@@ -1740,19 +1767,26 @@ function pintarEspejos(d){
   // ── Tabla histórica de mejores espejos ───────────────────────────────────
   const tabDiv=document.getElementById("esp-tabla");
   tabDiv.innerHTML="";
-  (d.tabla_espejos||[]).slice(0,20).forEach((e,i)=>{
-    const calor=e.pct>=25?"#ff3300":e.pct>=18?"#ff8800":e.pct>=12?"#f59e0b":e.pct>=7?"#c084fc":"#4a7fa0";
+  (d.tabla_espejos||[]).slice(0,24).forEach((e,i)=>{
+    const calor=e.pct>=25?"#ff2200":e.pct>=18?"#ff7700":e.pct>=12?"#f59e0b":e.pct>=7?"#c084fc":"#4a7fa0";
     const rankColor=i===0?"#ffd700":i<3?"#f59e0b":i<8?"#c084fc":"#4a7fa0";
+    const barW=Math.min(100,Math.round(e.pct));
+    // por posición breakdown
+    const pp=e.por_posicion||{};
+    const posBar=["1ra","2da","3ra"].map(lbl=>{
+      const v=pp[lbl]; if(!v||v.pct==null) return "";
+      const col=lbl==="1ra"?"#00e090":lbl==="2da"?"#00d4ff":"#ffaa00";
+      return `<span style="font-size:8px;color:${col};">${lbl}:${v.pct}%</span>`;
+    }).filter(Boolean).join(" ");
     const el=document.createElement("div");
-    el.style.cssText=`background:#0a0318;border:1.5px solid ${calor}55;border-radius:9px;padding:8px 6px;text-align:center;`;
-    // Barra de probabilidad
-    const barW=Math.round(e.pct);
+    el.style.cssText=`background:#0a0318;border:1.5px solid ${calor}55;border-radius:9px;padding:8px 5px;text-align:center;`;
     el.innerHTML=
       `<div style="font-size:9px;color:${rankColor};">#${i+1}</div>`+
       `<div style="font-size:24px;font-weight:bold;color:#e8f4ff;font-family:monospace;">${e.numero}</div>`+
       `<div style="height:4px;background:#1e3350;border-radius:2px;margin:4px 0;"><div style="height:100%;width:${barW}%;background:${calor};border-radius:2px;"></div></div>`+
-      `<div style="font-size:12px;color:${calor};font-weight:bold;">${e.pct}%</div>`+
-      `<div style="font-size:9px;color:#4a7fa0;">${e.repetidos}/${e.apariciones}</div>`;
+      `<div style="font-size:13px;color:${calor};font-weight:bold;">${e.pct}%</div>`+
+      `<div style="font-size:8px;color:#4a7fa0;">${e.repetidos}/${e.apariciones}</div>`+
+      (posBar?`<div style="margin-top:3px;display:flex;gap:2px;justify-content:center;flex-wrap:wrap;">${posBar}</div>`:"");
     tabDiv.appendChild(el);
   });
 
