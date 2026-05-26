@@ -1136,7 +1136,7 @@ def espejos_anguila():
                         nums_ayer_bypos[pos][n].append(sname)
         todos_ayer=set()
         for pos in [0,1,2]: todos_ayer.update(nums_ayer_bypos[pos].keys())
-        candidatos_hoy=[]
+        candidatos_raw=[]
         for n in todos_ayer:
             esp=next((x for x in tabla if x["numero"]==n),None)
             posiciones=[]
@@ -1144,20 +1144,35 @@ def espejos_anguila():
                 if n in nums_ayer_bypos[pos]:
                     posiciones.append({"pos":lbl,"veces":len(nums_ayer_bypos[pos][n]),
                                        "sorteos":[s.replace("Anguilla ","").replace("Anguila ","") for s in nums_ayer_bypos[pos][n][:5]]})
-            candidatos_hoy.append({
+            tot_ayer=sum(p["veces"] for p in posiciones)
+            pct=esp["pct"] if esp else 0
+            ap=esp["apariciones"] if esp else 0
+            # score_espejo: combina tasa histórica × peso de apariciones ayer
+            # Solo confiable si tiene suficiente historia (ap>=10) y tasa > base (~13%)
+            import math as _math
+            score_esp=round(pct*_math.log2(tot_ayer+2),4) if esp and ap>=10 else 0
+            candidatos_raw.append({
                 "numero":n,"posiciones_ayer":posiciones,
-                "total_apariciones_ayer":sum(p["veces"] for p in posiciones),
+                "total_apariciones_ayer":tot_ayer,
                 "tasa":esp["tasa"] if esp else 0,
-                "pct":esp["pct"] if esp else 0,
-                "apariciones":esp["apariciones"] if esp else 0,
+                "pct":pct,"score_espejo":score_esp,
+                "apariciones":ap,
                 "repetidos":esp["repetidos"] if esp else 0,
                 "por_posicion":esp["por_posicion"] if esp else {},
-                "en_tabla":esp is not None
+                "en_tabla":esp is not None and ap>=10
             })
-        candidatos_hoy.sort(key=lambda x:(-x["total_apariciones_ayer"],-x["tasa"]))
+        # ── Filtro: solo con historia suficiente y tasa por encima del azar ──
+        # Con ~15 sorteos Anguilla/día, la tasa base es ~15 nums únicos / 99 ≈ 15%
+        # Solo mostramos los que superan esa base O aparecieron 3+ veces ayer
+        TASA_MINIMA=15.0
+        candidatos_hoy=[c for c in candidatos_raw
+                        if c["en_tabla"] and (c["pct"]>=TASA_MINIMA or c["total_apariciones_ayer"]>=3)]
+        candidatos_hoy.sort(key=lambda x:-x["score_espejo"])
+        candidatos_hoy=candidatos_hoy[:12]  # top 12 seleccionados
         return jsonify({
             "tabla_espejos":tabla[:30],
             "candidatos_hoy":candidatos_hoy,
+            "total_candidatos_raw":len(candidatos_raw),
             "dias_analizados":dias_analizados,
             "ayer":ayer,"hoy":hoy,
             "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1440,7 +1455,8 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div class="card-title" style="color:#c084fc;">🪞 ESPEJOS HISTÓRICOS — Día D → 10AM D+1</div>
   <div style="font-size:11px;color:#4a7fa0;margin-bottom:10px;" id="esp-meta">—</div>
   <div style="margin-bottom:14px;">
-    <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">⚡ CANDIDATOS DE HOY (salieron ayer en 1ra de Anguilla):</div>
+    <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">⚡ TOP ESPEJOS HOY — selección por fuerza histórica:</div>
+    <div style="font-size:10px;color:#4a7fa0;margin-bottom:6px;">Solo números con tasa &gt;15% histórica + suficiente historia · Ordenado por score espejo</div>
     <div id="esp-candidatos" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
   </div>
   <div>
@@ -1733,7 +1749,8 @@ function pintarEspejos(d){
   const card=document.getElementById("card-espejos");
   card.classList.remove("hidden");
   document.getElementById("esp-meta").textContent=
-    `📊 ${d.dias_analizados} días analizados (pares D→D+1) · Ayer: ${d.ayer} · ${d.generado}`;
+    `📊 ${d.dias_analizados} días analizados · Ayer: ${d.ayer} · `+
+    `${d.candidatos_hoy?.length||0} seleccionados de ${d.total_candidatos_raw||"?"} totales · ${d.generado}`;
 
   // ── Candidatos de HOY: números que estuvieron en Anguilla ayer (1ra+2da+3ra)
   const candDiv=document.getElementById("esp-candidatos");
@@ -1754,12 +1771,14 @@ function pintarEspejos(d){
       }).join(" ");
       const el=document.createElement("div");
       el.style.cssText=`background:#0d0520;border:2px solid ${calor};border-radius:12px;padding:10px 10px;text-align:center;min-width:78px;box-shadow:0 0 10px ${calor}33;`;
+      const scoreDisp=c.score_espejo>0?`<div style="font-size:9px;color:#c084fc;margin-top:2px;">⚡${c.score_espejo.toFixed(1)}</div>`:"";
       el.innerHTML=
         `<div style="font-size:10px;color:${calor};font-weight:bold;margin-bottom:2px;">${llama}${tot}× ayer</div>`+
         `<div style="font-size:34px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;">${c.numero}</div>`+
-        `<div style="font-size:14px;color:${calor};font-weight:bold;margin:3px 0;">${pct>0?pct.toFixed(1)+"%":"—"}</div>`+
+        `<div style="font-size:15px;color:${calor};font-weight:bold;margin:3px 0;">${pct>0?pct.toFixed(1)+"%":"—"}</div>`+
         `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin-bottom:3px;">${posHtml}</div>`+
-        `<div style="font-size:9px;color:#4a7fa0;">${c.repetidos||0}/${c.apariciones||0} hist</div>`;
+        `<div style="font-size:9px;color:#4a7fa0;">${c.repetidos||0}/${c.apariciones||0} hist</div>`+
+        scoreDisp;
       candDiv.appendChild(el);
     });
   }
