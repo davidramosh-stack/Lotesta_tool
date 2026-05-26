@@ -1036,11 +1036,17 @@ HTML = r"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5.0, user-scalable=yes">
 <title>🎯 Anguilla 10AM — IA PRO</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:#060b14;color:#e0ecff;font-family:Arial,sans-serif;padding:12px;-webkit-tap-highlight-color:transparent;}
+body{background:#060b14;color:#e0ecff;font-family:Arial,sans-serif;-webkit-tap-highlight-color:transparent;}
+#app-wrapper{padding:12px;transform-origin:top left;}
+/* Barra de zoom flotante */
+#zoom-bar{position:fixed;bottom:18px;right:12px;z-index:9999;display:flex;flex-direction:column;gap:6px;}
+#zoom-bar button{width:46px;height:46px;border-radius:50%;border:2px solid #00d4ff44;background:#0b1624ee;color:#00d4ff;font-size:20px;font-weight:bold;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px #00000088;}
+#zoom-bar button:active{background:#00d4ff22;}
+#zoom-label{text-align:center;font-size:10px;color:#4a7fa0;font-family:monospace;}
 h1{font-size:20px;color:#00d4ff;text-align:center;margin-bottom:4px;letter-spacing:1px;}
 .subtitle{text-align:center;color:#4a7fa0;font-size:12px;margin-bottom:14px;letter-spacing:2px;}
 .card{background:#0b1624;border:1px solid #1e3350;border-radius:14px;padding:14px;margin-bottom:12px;}
@@ -1123,6 +1129,13 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
 </style>
 </head>
 <body>
+<!-- Barra zoom flotante -->
+<div id="zoom-bar">
+  <button onclick="cambiarZoom(0.1)" title="Agrandar">A+</button>
+  <div id="zoom-label">100%</div>
+  <button onclick="cambiarZoom(-0.1)" title="Reducir">A−</button>
+</div>
+<div id="app-wrapper">
 <h1>🎯 ANGUILLA 10AM</h1>
 <div class="subtitle">IA SCORE GANADOR V5 · PREDICCIONES EN VIVO</div>
 
@@ -1869,7 +1882,23 @@ function cerrar(){
 
 // Poll background
 setInterval(()=>{ if(pollCarga) pollearCarga(); if(pollAp) pollearAp(); },4000);
+
+// ── Zoom global de la app ────────────────────────────────────────────────
+let appZoom=parseFloat(localStorage.getItem('appZoom')||'1.0');
+function applyZoom(){
+  const w=document.getElementById('app-wrapper');
+  w.style.transform=`scale(${appZoom})`;
+  w.style.width=`${(100/appZoom).toFixed(1)}%`;
+  document.getElementById('zoom-label').textContent=Math.round(appZoom*100)+'%';
+  localStorage.setItem('appZoom',appZoom);
+}
+function cambiarZoom(d){
+  appZoom=Math.max(0.6,Math.min(2.5,Math.round((appZoom+d)*10)/10));
+  applyZoom();
+}
+applyZoom();
 </script>
+</div><!-- /app-wrapper -->
 </body>
 </html>"""
 
