@@ -745,6 +745,7 @@ def grafica_anguila():
         score_info=lot_mem.get("score_ganador",{}) or {}
         puntos=list(lot_mem.get("score_por_fecha",[]) or [])
         if not puntos: return jsonify({"error":"No hay score_por_fecha"})
+        regs_lot_biblia=[]; por_loteria_biblia=defaultdict(list); por_fecha_biblia=defaultdict(list)
         try:
             ultima_fecha_mem=max([str(p.get("fecha","")) for p in puntos if p.get("fecha")])
             por_loteria_biblia,por_fecha_biblia,_=preparar_indices(registros)
@@ -762,46 +763,56 @@ def grafica_anguila():
                     if num==real_new: rank_real_new=pos; break
                 puntos.append({"fecha":fecha_new,"score_ganador":round(score_real_new,4),"rank_ganador":rank_real_new,"numero":real_new,"pendiente_memoria":True})
         except: pass
-        valores=[]
+        # ── Agregar numero_int (0-99) a cada punto ────────────────────────────
         for p in puntos:
-            try: valores.append(float(p.get("score_ganador",0)))
-            except: pass
-        vmin=min(valores) if valores else 0; vmax=max(valores) if valores else 100
-        rango_min=float(score_info.get("rango_min",0) or 0); rango_max=float(score_info.get("rango_max",0) or 0)
-        promedio=float(score_info.get("promedio",0) or 0)
-        margen=max(10,(vmax-vmin)*0.15)
-        escala_min=max(0,min(vmin,rango_min)-margen); escala_max=max(vmax,rango_max)+margen
-        tendencia="ESTABLE"; proyeccion_score=valores[-1] if valores else 0; media_mov=0
-        if len(valores)>=2:
-            recientes_mov=valores[-18:] if len(valores)>=18 else valores
-            diffs=[abs(recientes_mov[i]-recientes_mov[i-1]) for i in range(1,len(recientes_mov))]
-            media_mov=sum(diffs)/len(diffs) if diffs else 0
-        if len(valores)>=8:
-            recientes=valores[-8:]; x_mean=(len(recientes)-1)/2; y_mean=sum(recientes)/len(recientes)
-            den=sum((i-x_mean)**2 for i in range(len(recientes))) or 1
-            slope=sum((i-x_mean)*(recientes[i]-y_mean) for i in range(len(recientes)))/den
-            proyeccion_score=recientes[-1]+(slope*4)
+            try: p["numero_int"]=int(str(p.get("numero","0") or "0").zfill(2)[-2:])
+            except: p["numero_int"]=0
+        # ── Umbrales de score (para colorear puntos: ¿la IA lo predijo?) ──────
+        score_rango_min=float(score_info.get("rango_min",0) or 0)
+        score_rango_max=float(score_info.get("rango_max",100) or 100)
+        # ── Zona reciente: IQR de los últimos 30 números ganadores ────────────
+        num_vals=[p["numero_int"] for p in puntos]
+        rec30=num_vals[-30:] if len(num_vals)>=30 else num_vals
+        if rec30:
+            rs=sorted(rec30)
+            nq25=rs[int(len(rs)*0.25)]; nq75=rs[int(len(rs)*0.75)]
+            num_zona_min=max(0,nq25-5); num_zona_max=min(99,nq75+5)
+        else: num_zona_min=25; num_zona_max=75
+        # ── Candidatos IA actuales (números cuyo score está en rango) ──────────
+        candidatos_ia_nums=[]
+        try:
+            if regs_lot_biblia:
+                ultimo_dia=max((r.get("fecha","") for r in regs_lot_biblia if r.get("fecha")),default="")
+                fecha_obj=(datetime.strptime(ultimo_dia,"%Y-%m-%d")+timedelta(days=1)).strftime("%Y-%m-%d")
+                scores_act=calcular_score_candidatos(regs_lot_biblia,fecha_obj,por_fecha_biblia)
+                candidatos_ia_nums=sorted(
+                    [int(n) for n,sc in scores_act.items() if score_rango_min<=sc<=score_rango_max],
+                    key=lambda x:-float(scores_act.get(str(x).zfill(2),0))
+                )[:20]
+        except: pass
+        # ── Tendencia del NÚMERO (no del score) ───────────────────────────────
+        tendencia="ESTABLE"; proyeccion_num=num_vals[-1] if num_vals else 50; media_mov_num=0
+        if len(num_vals)>=2:
+            rm=num_vals[-18:] if len(num_vals)>=18 else num_vals
+            diffs=[abs(rm[i]-rm[i-1]) for i in range(1,len(rm))]
+            media_mov_num=sum(diffs)/len(diffs) if diffs else 0
+        if len(num_vals)>=8:
+            rec=num_vals[-8:]; xm=(len(rec)-1)/2; ym=sum(rec)/len(rec)
+            den=sum((i-xm)**2 for i in range(len(rec))) or 1
+            slope=sum((i-xm)*(rec[i]-ym) for i in range(len(rec)))/den
+            proyeccion_num=int(max(0,min(99,rec[-1]+(slope*4))))
             if slope>2.5: tendencia="ASCENDENTE"
             elif slope<-2.5: tendencia="DESCENDENTE"
-        if valores:
-            ultimo_score=valores[-1]
-            if media_mov<=0: media_mov=max(5,abs(proyeccion_score-ultimo_score))
-            if tendencia=="ASCENDENTE": brecha_min=ultimo_score+media_mov; brecha_max=ultimo_score+(media_mov*2)
-            elif tendencia=="DESCENDENTE": brecha_min=ultimo_score-(media_mov*2); brecha_max=ultimo_score-media_mov
-            else: brecha_min=ultimo_score-(media_mov*0.5); brecha_max=ultimo_score+(media_mov*0.5)
-            if brecha_min>brecha_max: brecha_min,brecha_max=brecha_max,brecha_min
-            brecha_min=max(0,brecha_min); brecha_max=max(0,brecha_max)
-        else: brecha_min=0; brecha_max=0
-        extras=[proyeccion_score,brecha_min,brecha_max,promedio,rango_min,rango_max]
-        extras=[float(x) for x in extras if x is not None]
-        if extras: escala_min=min(escala_min,min(extras)); escala_max=max(escala_max,max(extras))
-        margen2=max(15,(escala_max-escala_min)*0.12); escala_min=max(0,escala_min-margen2); escala_max=escala_max+margen2
-        niveles=[]
-        if escala_max>escala_min:
-            for i in range(1,5): niveles.append(round(escala_min+((escala_max-escala_min)*i/4),2))
         warmup_n=int(lot_mem.get("warmup_n",MIN_WARMUP) or MIN_WARMUP)
         warmup_fecha=str(lot_mem.get("warmup_fecha","") or "")
-        return jsonify({"loteria":nombre_obj,"puntos":puntos,"rango_min":rango_min,"rango_max":rango_max,"promedio":promedio,"escala_min":round(escala_min,2),"escala_max":round(escala_max,2),"niveles":niveles,"total":len(puntos),"tendencia":tendencia,"proyeccion_score":round(proyeccion_score,2),"media_mov":round(media_mov,2),"brecha_min":round(brecha_min,2),"brecha_max":round(brecha_max,2),"warmup_n":warmup_n,"warmup_fecha":warmup_fecha})
+        return jsonify({"loteria":nombre_obj,"puntos":puntos,"total":len(puntos),
+            "escala_min":-3,"escala_max":102,
+            "niveles":[0,10,20,30,40,50,60,70,80,90,99],
+            "num_zona_min":num_zona_min,"num_zona_max":num_zona_max,
+            "score_rango_min":round(score_rango_min,4),"score_rango_max":round(score_rango_max,4),
+            "candidatos_ia_nums":candidatos_ia_nums,
+            "tendencia":tendencia,"proyeccion_num":proyeccion_num,"media_mov_num":round(media_mov_num,2),
+            "warmup_n":warmup_n,"warmup_fecha":warmup_fecha})
     except Exception as e: return jsonify({"error":str(e)})
 
 @app.route("/heatmap_anguila")
@@ -1232,6 +1243,14 @@ function calcMA(valores,ventana){
   });
 }
 
+function numColor(score,srmin,srmax,warmup){
+  // Verde = IA lo predijo (score en rango), Amarillo = frío, Rojo = quemado
+  if(warmup) return "rgba(130,130,160,.55)";
+  if(score>=srmin&&score<=srmax) return "rgba(0,210,120,1)";
+  if(score<srmin) return "rgba(255,190,30,1)";
+  return "rgba(255,60,60,1)";
+}
+
 function dibujarGrafica(prog){
   if(!graficaData) return;
   prog=prog==null?1.0:prog;
@@ -1240,84 +1259,88 @@ function dibujarGrafica(prog){
   const yAxis=document.getElementById("y-axis");
   const scroll=document.getElementById("chart-scroll");
   const ctx=canvas.getContext("2d");
-  const h=280, padTop=18, padBottom=26, usableH=h-padTop-padBottom;
-  const minY=Number(graficaData.escala_min||0), maxY=Number(graficaData.escala_max||100);
-  const rango=maxY-minY||1;
-  const espacioFuturo=Math.max(130,espacioPuntos*14);
+  const h=300, padTop=18, padBottom=28, padRight=54, usableH=h-padTop-padBottom;
+
+  // Escala FIJA 0-99 (espacio de números)
+  const minY=-3, maxY=102, rango=maxY-minY;
+  const espacioFuturo=Math.max(140,espacioPuntos*16);
   const w=Math.max(scroll.clientWidth-48,80+puntos.length*espacioPuntos+espacioFuturo);
   canvas.width=w; canvas.height=h; canvas.style.width=w+"px"; canvas.style.height=h+"px";
 
-  function yp(score){ return padTop+((maxY-score)/rango)*usableH; }
+  function yp(n){ return padTop+((maxY-n)/rango)*usableH; }
   function xp(i){ return 10+i*espacioPuntos; }
 
   ctx.clearRect(0,0,w,h);
 
-  const rmin=Number(graficaData.rango_min||minY), rmax=Number(graficaData.rango_max||maxY);
   const warmupN=Number(graficaData.warmup_n||50);
-  const warmupX=puntos.length>warmupN ? xp(warmupN) : -1; // X donde termina calentamiento
+  const warmupX=puntos.length>warmupN?xp(warmupN):-1;
+  const fondoX=Math.max(0,warmupX);
 
-  // Zona calentamiento (fondo gris oscuro)
+  // ── Zona calentamiento (gris) ─────────────────────────────────────────────
   if(warmupX>0){
-    ctx.fillStyle="rgba(80,80,100,.18)"; ctx.fillRect(0,padTop,warmupX,h-padBottom-padTop);
+    ctx.fillStyle="rgba(70,70,90,.20)";
+    ctx.fillRect(0,padTop,warmupX,usableH);
   }
 
-  // Zonas de fondo (solo en zona estable)
-  const fondoX=warmupX>0?warmupX:0;
-  ctx.fillStyle="rgba(255,50,50,.06)"; ctx.fillRect(fondoX,padTop,w-fondoX,Math.max(0,yp(rmax)-padTop));
-  ctx.fillStyle="rgba(0,200,120,.10)"; ctx.fillRect(fondoX,yp(rmax),w-fondoX,Math.max(0,yp(rmin)-yp(rmax)));
-  ctx.fillStyle="rgba(255,170,0,.06)"; ctx.fillRect(fondoX,yp(rmin),w-fondoX,Math.max(0,h-padBottom-yp(rmin)));
+  // ── Zona reciente de números (IQR últimos 30 — banda verde tenue) ─────────
+  const nzMin=Number(graficaData.num_zona_min??25);
+  const nzMax=Number(graficaData.num_zona_max??75);
+  ctx.fillStyle="rgba(0,200,120,.09)";
+  ctx.fillRect(fondoX,yp(nzMax),w-fondoX-padRight,Math.max(2,yp(nzMin)-yp(nzMax)));
 
-  // Líneas guía horizontales
-  ctx.strokeStyle="rgba(200,230,255,.13)"; ctx.lineWidth=1; ctx.setLineDash([5,7]);
-  (graficaData.niveles||[]).forEach(n=>{ const yy=yp(Number(n)); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(w,yy); ctx.stroke(); });
+  // ── Cuadrícula horizontal cada 10 números ─────────────────────────────────
+  ctx.strokeStyle="rgba(200,230,255,.13)"; ctx.lineWidth=1; ctx.setLineDash([4,6]);
+  (graficaData.niveles||[]).forEach(n=>{
+    const yy=yp(n); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(w-padRight,yy); ctx.stroke();
+  });
   ctx.setLineDash([]);
 
-  // Rango ganador (solo en zona estable)
-  ctx.strokeStyle="rgba(0,200,120,.35)"; ctx.lineWidth=1;
-  [rmin,rmax].forEach(n=>{ const yy=yp(Number(n)); ctx.beginPath(); ctx.moveTo(Math.max(0,warmupX),yy); ctx.lineTo(w,yy); ctx.stroke(); });
+  // ── Líneas de zona IQR reciente ───────────────────────────────────────────
+  [nzMin,nzMax].forEach(n=>{
+    const yy=yp(n); ctx.strokeStyle="rgba(0,200,120,.40)"; ctx.lineWidth=1;
+    ctx.setLineDash([5,5]); ctx.beginPath(); ctx.moveTo(fondoX,yy); ctx.lineTo(w-padRight,yy); ctx.stroke(); ctx.setLineDash([]);
+  });
 
-  // Línea vertical de calentamiento
+  // ── Separador calentamiento ───────────────────────────────────────────────
   if(warmupX>0){
-    ctx.strokeStyle="rgba(200,200,100,.55)"; ctx.lineWidth=1.5; ctx.setLineDash([4,5]);
+    ctx.strokeStyle="rgba(200,200,80,.55)"; ctx.lineWidth=1.5; ctx.setLineDash([4,4]);
     ctx.beginPath(); ctx.moveTo(warmupX,padTop); ctx.lineTo(warmupX,h-padBottom); ctx.stroke(); ctx.setLineDash([]);
-    ctx.font="bold 10px monospace"; ctx.textAlign="left";
-    ctx.fillStyle="rgba(5,7,10,.72)"; ctx.fillRect(warmupX+3,padTop+2,95,16);
-    ctx.fillStyle="rgba(200,200,100,.90)"; ctx.fillText("◀ CALENTAMIENTO",warmupX+5,padTop+13);
+    ctx.font="bold 9px monospace"; ctx.textAlign="left";
+    ctx.fillStyle="rgba(5,7,10,.75)"; ctx.fillRect(warmupX+2,padTop+1,88,14);
+    ctx.fillStyle="rgba(200,200,80,.90)"; ctx.fillText("◀ CALENTAM.",warmupX+4,padTop+12);
   }
 
-  // Cuántos puntos dibujar (animación)
   const drawCount=Math.max(1,Math.round(prog*puntos.length));
-  const valores=puntos.map(p=>Number(p.score_ganador||0));
+  // valores = número ganador (0-99) para MAs
+  const valores=puntos.map(p=>Number(p.numero_int??parseInt(p.numero||"0")));
 
-  // Curva principal con clip de animación
+  // ── Curva conectora de números ────────────────────────────────────────────
   ctx.save(); ctx.beginPath(); ctx.rect(0,0,xp(drawCount-1)+espacioPuntos,h); ctx.clip();
 
   // Tramo calentamiento (gris tenue)
-  if(warmupN>1 && drawCount>1){
-    const limWU=Math.min(warmupN+1,drawCount);
-    ctx.strokeStyle="rgba(140,140,180,.45)"; ctx.lineWidth=2; ctx.beginPath();
-    puntos.slice(0,limWU).forEach((p,i)=>{
-      const xx=xp(i), yy=yp(Number(p.score_ganador||0));
+  if(warmupN>1&&drawCount>1){
+    ctx.strokeStyle="rgba(120,120,160,.35)"; ctx.lineWidth=1.5; ctx.beginPath();
+    puntos.slice(0,Math.min(warmupN+1,drawCount)).forEach((p,i)=>{
+      const xx=xp(i), yy=yp(valores[i]);
       i===0?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
     });
     ctx.stroke();
   }
-  // Tramo estable (azul normal)
+  // Tramo estable (azul)
   if(drawCount>warmupN){
-    ctx.strokeStyle="rgba(0,180,255,.95)"; ctx.lineWidth=2.5; ctx.beginPath();
-    puntos.slice(warmupN,drawCount).forEach((p,i)=>{
-      const ii=warmupN+i;
-      const xx=xp(ii), yy=yp(Number(p.score_ganador||0));
-      i===0?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
-    });
+    ctx.strokeStyle="rgba(0,180,255,.70)"; ctx.lineWidth=2; ctx.beginPath();
+    for(let i=warmupN;i<drawCount;i++){
+      const xx=xp(i), yy=yp(valores[i]);
+      i===warmupN?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
+    }
     ctx.stroke();
   }
 
-  // Moving Averages
+  // ── Moving Averages del NÚMERO ────────────────────────────────────────────
   function drawMA(ventana,color,dash){
     if(valores.length<ventana) return;
     const ma=calcMA(valores,ventana);
-    ctx.strokeStyle=color; ctx.lineWidth=1.5; ctx.setLineDash(dash||[]);
+    ctx.strokeStyle=color; ctx.lineWidth=2; ctx.setLineDash(dash||[]);
     ctx.beginPath(); let started=false;
     ma.slice(0,drawCount).forEach((v,i)=>{
       if(v==null) return;
@@ -1326,85 +1349,37 @@ function dibujarGrafica(prog){
     });
     ctx.stroke(); ctx.setLineDash([]);
   }
-  if(mostrarMAs.ma7)  drawMA(7,"rgba(255,200,0,.80)",[4,4]);
-  if(mostrarMAs.ma15) drawMA(15,"rgba(150,100,255,.75)",[6,4]);
-  if(mostrarMAs.ma30) drawMA(30,"rgba(0,230,140,.65)",[9,5]);
+  if(mostrarMAs.ma7)  drawMA(7,"rgba(255,200,0,.85)",[4,4]);
+  if(mostrarMAs.ma15) drawMA(15,"rgba(160,110,255,.80)",[6,4]);
+  if(mostrarMAs.ma30) drawMA(30,"rgba(0,230,140,.70)",[9,5]);
 
-  // Números ganadores sobre/bajo puntos
-  if(mostrarMAs.nums && drawCount>0){
+  // ── Etiquetas de número sobre cada punto ──────────────────────────────────
+  if(mostrarMAs.nums&&drawCount>0){
     ctx.font="bold 9px Arial"; ctx.textAlign="center";
+    const srmin=Number(graficaData.score_rango_min||0);
+    const srmax=Number(graficaData.score_rango_max||100);
     puntos.slice(0,drawCount).forEach((p,i)=>{
-      if(i%2!==0 && drawCount>30) return; // thin on dense charts
-      const sc=Number(p.score_ganador||0);
-      const xx=xp(i), yy=yp(sc);
-      const textY=sc>((maxY+minY)/2)?yy+14:yy-6;
-      ctx.fillStyle="rgba(180,210,255,.7)";
+      if(i<warmupN) return; // no labels en calentamiento
+      if(i%2!==0&&drawCount>40) return;
+      const nv=valores[i], xx=xp(i), yy=yp(nv);
+      const textY=nv>50?yy+13:yy-5;
+      ctx.fillStyle=numColor(Number(p.score_ganador||0),srmin,srmax,false);
       ctx.fillText(p.numero||"",xx,textY);
     });
   }
 
   ctx.restore();
 
-  // Línea vertical HOY
-  if(drawCount>=puntos.length&&puntos.length>0){
-    const hx=xp(puntos.length-1);
-    ctx.strokeStyle="rgba(255,255,255,.45)"; ctx.lineWidth=1.5; ctx.setLineDash([5,7]);
-    ctx.beginPath(); ctx.moveTo(hx,padTop); ctx.lineTo(hx,h-padBottom); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle="rgba(255,255,255,.8)"; ctx.font="11px monospace"; ctx.textAlign="left";
-    ctx.fillText("HOY",hx+5,padTop+11);
-  }
-
-  // Línea de tendencia + flecha
-  if(drawCount>=puntos.length&&puntos.length>1){
-    const lastIdx=puntos.length-1;
-    const hx=xp(lastIdx); const lastScore=Number(puntos[lastIdx].score_ganador||0);
-    const projScore=Number(graficaData.proyeccion_score||lastScore);
-    const x1=hx+espacioPuntos*1.4, y1=yp(lastScore);
-    const x2=hx+espacioPuntos*9;
-    let y2=yp(projScore);
-    const maxMove=usableH*0.28;
-    if(y2<y1-maxMove) y2=y1-maxMove;
-    if(y2>y1+maxMove) y2=y1+maxMove;
-    ctx.strokeStyle="rgba(180,100,255,.88)"; ctx.lineWidth=2; ctx.setLineDash([8,7]);
-    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); ctx.setLineDash([]);
-    const angle=Math.atan2(y2-y1,x2-x1), hl=11;
-    ctx.fillStyle="rgba(180,100,255,.95)"; ctx.beginPath(); ctx.moveTo(x2,y2);
-    ctx.lineTo(x2-hl*Math.cos(angle-Math.PI/6),y2-hl*Math.sin(angle-Math.PI/6));
-    ctx.lineTo(x2-hl*Math.cos(angle+Math.PI/6),y2-hl*Math.sin(angle+Math.PI/6));
-    ctx.closePath(); ctx.fill();
-    ctx.font="11px monospace"; ctx.textAlign="left";
-    const label="TEND "+( graficaData.tendencia||"");
-    const lx=x1+8, ly=y2<y1?y2-10:y2+18;
-    ctx.fillStyle="rgba(5,7,10,.72)"; ctx.fillRect(lx-4,ly-12,ctx.measureText(label).width+10,17);
-    ctx.fillStyle="rgba(220,180,255,.95)"; ctx.fillText(label,lx,ly);
-  }
-
-  // Brecha proyectada
-  if(drawCount>=puntos.length&&graficaData.brecha_min!=null){
-    const bmin=Number(graficaData.brecha_min||0), bmax=Number(graficaData.brecha_max||0);
-    const yTopB=yp(Math.max(bmin,bmax)), yBotB=yp(Math.min(bmin,bmax));
-    const startX=puntos.length>0?xp(puntos.length-1)+espacioPuntos:0;
-    ctx.fillStyle="rgba(180,100,255,.12)"; ctx.fillRect(startX,yTopB,Math.max(20,w-startX),Math.max(2,yBotB-yTopB));
-    ctx.strokeStyle="rgba(180,100,255,.38)"; ctx.lineWidth=1; ctx.setLineDash([4,6]);
-    ctx.beginPath(); ctx.moveTo(startX,yTopB); ctx.lineTo(w,yTopB); ctx.moveTo(startX,yBotB); ctx.lineTo(w,yBotB); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle="rgba(220,180,255,.95)"; ctx.font="11px monospace"; ctx.textAlign="left";
-    ctx.fillText("BRECHA "+bmin.toFixed(1)+"-"+bmax.toFixed(1),startX+5,Math.max(padTop+14,yTopB-6));
-  }
-
-  // Puntos coloreados
+  // ── Puntos coloreados ─────────────────────────────────────────────────────
+  const srmin=Number(graficaData.score_rango_min||0);
+  const srmax=Number(graficaData.score_rango_max||100);
   puntos.slice(0,drawCount).forEach((p,i)=>{
-    const sc=Number(p.score_ganador||0), xx=xp(i), yy=yp(sc);
-    let color;
-    if(i<warmupN){
-      // calentamiento: puntos grises semitransparentes
-      color="rgba(150,150,180,.50)";
-    } else if(p.pendiente_memoria){
-      color="rgba(255,255,255,1)";
-    } else {
-      color=sc>rmax?"rgba(255,70,70,1)":sc<rmin?"rgba(255,200,0,1)":"rgba(0,200,120,1)";
-    }
+    const nv=valores[i], xx=xp(i), yy=yp(nv);
+    const isWarmup=i<warmupN;
+    const sc=Number(p.score_ganador||0);
+    const color=p.pendiente_memoria?"rgba(255,255,255,1)":numColor(sc,srmin,srmax,isWarmup);
     ctx.fillStyle=color; ctx.beginPath();
-    const r=i===puntos.length-1?7:(i<warmupN?2.5:3.5);
+    const r=i===puntos.length-1?7:(isWarmup?2:3.5);
     ctx.arc(xx,yy,r,0,Math.PI*2); ctx.fill();
     if(i===puntos.length-1){
       ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.lineWidth=2;
@@ -1412,22 +1387,73 @@ function dibujarGrafica(prog){
     }
   });
 
-  // Eje X inferior
-  ctx.strokeStyle="rgba(200,230,255,.18)"; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.moveTo(0,h-padBottom); ctx.lineTo(w,h-padBottom); ctx.stroke();
+  // ── HOY + flecha proyección NÚMERO ───────────────────────────────────────
+  if(drawCount>=puntos.length&&puntos.length>0){
+    const hx=xp(puntos.length-1);
+    ctx.strokeStyle="rgba(255,255,255,.40)"; ctx.lineWidth=1.5; ctx.setLineDash([5,6]);
+    ctx.beginPath(); ctx.moveTo(hx,padTop); ctx.lineTo(hx,h-padBottom); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle="rgba(255,255,255,.8)"; ctx.font="11px monospace"; ctx.textAlign="left";
+    ctx.fillText("HOY",hx+5,padTop+11);
 
-  // Y axis labels
+    // Flecha proyección
+    const lastNum=valores[puntos.length-1];
+    const projNum=Number(graficaData.proyeccion_num??lastNum);
+    const x1=hx+espacioPuntos*1.5, y1=yp(lastNum);
+    const x2=hx+espacioPuntos*9;
+    let y2=yp(Math.max(0,Math.min(99,projNum)));
+    const maxMove=usableH*0.30;
+    if(y2<y1-maxMove) y2=y1-maxMove;
+    if(y2>y1+maxMove) y2=y1+maxMove;
+    ctx.strokeStyle="rgba(180,100,255,.90)"; ctx.lineWidth=2.5; ctx.setLineDash([8,6]);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); ctx.setLineDash([]);
+    const ang=Math.atan2(y2-y1,x2-x1), hl=11;
+    ctx.fillStyle="rgba(200,130,255,.95)"; ctx.beginPath(); ctx.moveTo(x2,y2);
+    ctx.lineTo(x2-hl*Math.cos(ang-Math.PI/6),y2-hl*Math.sin(ang-Math.PI/6));
+    ctx.lineTo(x2-hl*Math.cos(ang+Math.PI/6),y2-hl*Math.sin(ang+Math.PI/6));
+    ctx.closePath(); ctx.fill();
+    const label=`TEND ${graficaData.tendencia||""}  →${String(projNum).padStart(2,"0")}`;
+    const lx=x1+4, ly=y2<y1?y2-10:y2+18;
+    ctx.font="bold 11px monospace"; ctx.textAlign="left";
+    ctx.fillStyle="rgba(5,7,10,.75)"; ctx.fillRect(lx-3,ly-13,ctx.measureText(label).width+9,16);
+    ctx.fillStyle="rgba(220,180,255,.95)"; ctx.fillText(label,lx,ly);
+  }
+
+  // ── Candidatos IA: marcadores en borde derecho ────────────────────────────
+  if(drawCount>=puntos.length){
+    const cands=graficaData.candidatos_ia_nums||[];
+    const rx=w-padRight+4;
+    ctx.font="bold 10px monospace"; ctx.textAlign="left";
+    cands.slice(0,18).forEach((n,i)=>{
+      const yy=yp(n);
+      const alpha=Math.max(0.35,1-(i/18)*0.65);
+      // diamante
+      ctx.fillStyle=`rgba(0,212,255,${alpha})`;
+      ctx.beginPath(); ctx.moveTo(rx+7,yy); ctx.lineTo(rx+13,yy-5); ctx.lineTo(rx+19,yy); ctx.lineTo(rx+13,yy+5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle=`rgba(200,240,255,${alpha})`;
+      ctx.fillText(String(n).padStart(2,"0"),rx+22,yy+4);
+    });
+    // Etiqueta columna
+    ctx.fillStyle="rgba(0,212,255,.55)"; ctx.font="9px monospace"; ctx.textAlign="left";
+    ctx.fillText("IA▼",rx+4,padTop+10);
+  }
+
+  // ── Eje X inferior ────────────────────────────────────────────────────────
+  ctx.strokeStyle="rgba(200,230,255,.18)"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,h-padBottom); ctx.lineTo(w-padRight,h-padBottom); ctx.stroke();
+
+  // ── Y axis labels (0-99) ──────────────────────────────────────────────────
   yAxis.innerHTML="";
   (graficaData.niveles||[]).slice().reverse().forEach(n=>{
-    const yy=yp(Number(n)); const el=document.createElement("div");
+    const yy=yp(n); const el=document.createElement("div");
     el.style.cssText=`position:absolute;right:4px;top:${Math.max(0,yy-8)}px;font-size:10px;color:#4a7fa0;font-family:monospace;`;
-    el.textContent=String(n); yAxis.appendChild(el);
+    el.textContent=String(n).padStart(2,"0"); yAxis.appendChild(el);
   });
 
+  // ── Info bar ──────────────────────────────────────────────────────────────
   document.getElementById("grafica-info").textContent=
-    `${graficaData.total} puntos · calent:${warmupN} · sep:${espacioPuntos} · rango estable:${graficaData.rango_min}-${graficaData.rango_max} · tend:${graficaData.tendencia||""}`;
+    `${graficaData.total} sorteos · zona IQR30:${nzMin}-${nzMax} · tend:${graficaData.tendencia||""} · proy:${graficaData.proyeccion_num??""} · IA: ${(graficaData.candidatos_ia_nums||[]).length} candidatos`;
 
-  // Click/touch para tooltip
+  // ── Tooltip al tocar ──────────────────────────────────────────────────────
   canvas.onclick=function(ev){
     const rect=canvas.getBoundingClientRect();
     const scaleX=canvas.width/rect.width;
@@ -1436,11 +1462,14 @@ function dibujarGrafica(prog){
     puntos.forEach((p,i)=>{ const d=Math.abs(clickX-xp(i)); if(d<mejor){mejor=d;idx=i;} });
     const p=puntos[idx];
     const ma7v=calcMA(valores,7); const ma15v=calcMA(valores,15); const ma30v=calcMA(valores,30);
+    const sc=Number(p.score_ganador||0);
+    const mov=idx>0?`(${valores[idx]-valores[idx-1]>0?"+":""}${valores[idx]-valores[idx-1]})`: "";
+    const enRango=(sc>=srmin&&sc<=srmax)?"✅ en rango IA":(sc<srmin?"🟡 frío":"🔴 quemado");
     document.getElementById("grafica-tip").textContent=
-      `📅 ${p.fecha}  🎯 Nro: ${p.numero}  📊 Score: ${p.score_ganador}  🏁 Rank: ${p.rank_ganador}`+
-      `\nMA7: ${ma7v[idx]?.toFixed(2)||"—"}  MA15: ${ma15v[idx]?.toFixed(2)||"—"}  MA30: ${ma30v[idx]?.toFixed(2)||"—"}`+
-      `\nTendencia: ${graficaData.tendencia||""}  Brecha: ${graficaData.brecha_min||0}-${graficaData.brecha_max||0}`+
-      (p.pendiente_memoria?"\n⚡ Punto nuevo (pendiente reaprender)":"");
+      `📅 ${p.fecha}  🎯 Número: ${p.numero} ${mov}  🏁 Rank: ${p.rank_ganador}`+
+      `\n📊 Score: ${p.score_ganador}  ${enRango}`+
+      `\nMA7-num: ${ma7v[idx]?.toFixed(1)||"—"}  MA15: ${ma15v[idx]?.toFixed(1)||"—"}  MA30: ${ma30v[idx]?.toFixed(1)||"—"}`+
+      (p.pendiente_memoria?"\n⚡ Nuevo (pendiente reaprender)":"");
   };
 }
 
