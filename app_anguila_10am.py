@@ -961,6 +961,17 @@ def sucesor_anguila():
         total_dec=sum(trans_dec[dec_ult].values()) or 1
         tabla_decenas=[{"decena":d,"freq":f,"pct":round(f/total_dec*100,1)}
             for d,f in sorted(trans_dec[dec_ult].items(),key=lambda x:-x[1])]
+        # ── Espejos: cuáles candidatos también salieron ayer en Anguilla ─────
+        _,por_fecha,_=preparar_indices(registros)
+        ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
+        nums_ayer_ang=Counter()
+        for rr in por_fecha.get(ayer,[]):
+            if es_anguila_cualquiera(rr.get("loteria","")):
+                for n in (rr.get("numeros") or [])[:3]:
+                    if n: nums_ayer_ang[n]+=1
+        # Añadir campo espejo a cada candidato del sucesor
+        for c in top:
+            c["esp_veces_ayer"]=nums_ayer_ang.get(c["numero"],0)
         return jsonify({"loteria":nombre_obj,"total_hist":len(regs),
             "ultimo_numero":ultimo,"ultimos_8":ultimos,"top_sucesor":top,
             "tabla_decenas":tabla_decenas,"generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
@@ -1825,16 +1836,22 @@ function pintarSucesor(d){
   grid.innerHTML="";
   (d.top_sucesor||[]).slice(0,20).forEach((c,i)=>{
     const el=document.createElement("div");
+    const isEsp=(c.esp_veces_ayer||0)>0;
     const rankColor=i<3?"#ffd700":i<7?"#00d4ff":i<12?"#00e090":"#4a7fa0";
-    el.style.cssText=`background:#060b14;border:1.5px solid ${rankColor}44;border-radius:9px;padding:10px 6px;text-align:center;position:relative;`;
+    const borderStyle=isEsp?`2px solid #c084fc`:`1.5px solid ${rankColor}44`;
+    const glow=isEsp?"box-shadow:0 0 10px #c084fc44;":"";
+    el.style.cssText=`background:#060b14;border:${borderStyle};border-radius:9px;padding:10px 6px;text-align:center;position:relative;${glow}`;
     const barW=Math.max(4,c.score_suc);
+    const espBadge=isEsp
+      ?`<div style="font-size:8px;color:#c084fc;font-weight:bold;margin-top:2px;">🪞${c.esp_veces_ayer}× ayer</div>`:"";
     el.innerHTML=`
-      <div style="position:absolute;top:0;left:0;width:${barW}%;height:3px;background:${rankColor};border-radius:9px 9px 0 0;opacity:.7;"></div>
-      <div style="font-size:9px;color:${rankColor};margin-bottom:2px;">#${i+1}</div>
+      <div style="position:absolute;top:0;left:0;width:${barW}%;height:3px;background:${isEsp?"#c084fc":rankColor};border-radius:9px 9px 0 0;opacity:.7;"></div>
+      <div style="font-size:9px;color:${rankColor};margin-bottom:2px;">#${i+1}${isEsp?" 🪞":""}</div>
       <div style="font-size:26px;font-weight:bold;color:#e8f4ff;font-family:monospace;line-height:1.1;">${c.numero}</div>
       <div style="font-size:9px;color:#ffaa00;margin-top:2px;">${c.score_suc}pts</div>
       <div style="font-size:9px;color:#4a7fa0;margin-top:2px;">L1:${c.pct_lag1}% DEC:${c.pct_dec}%</div>
-      <div style="font-size:8px;color:#2a4a60;margin-top:1px;">${c.patron||""}</div>`;
+      <div style="font-size:8px;color:#2a4a60;margin-top:1px;">${c.patron||""}</div>
+      ${espBadge}`;
     grid.appendChild(el);
   });
   grid.scrollIntoView({behavior:"smooth",block:"start"});
