@@ -483,6 +483,105 @@ def intercalar_candidatos_v4(candidatos,rmin,rmax,proyeccion,maximo=35):
         if not avanzo: break
     return salida
 
+# ══════════════════════════════════════════════════════════
+# MOTOR SUCESOR — patrones de transición histórica
+# ══════════════════════════════════════════════════════════
+def construir_matrices_transicion(primeras):
+    """
+    Lee toda la secuencia histórica de 1ras y construye:
+    - trans[lag][n] = Counter de sucesores a ese lag
+    - trans_dec[dec_n] = Counter de decenas sucesoras (lag-1)
+    """
+    T=len(primeras)
+    trans={1:defaultdict(Counter),2:defaultdict(Counter),
+           3:defaultdict(Counter),5:defaultdict(Counter)}
+    trans_dec=defaultdict(Counter)
+    for i in range(T):
+        n=primeras[i]
+        dec=str(int(n)//10)
+        for lag in [1,2,3,5]:
+            if i+lag<T:
+                suc=primeras[i+lag]
+                trans[lag][n][suc]+=1
+        if i+1<T:
+            suc1=primeras[i+1]
+            trans_dec[dec][str(int(suc1)//10)]+=1
+    return trans,trans_dec
+
+def predecir_sucesor(hist_lot_sorted,ventana=8):
+    """
+    Dado el historial ordenado, analiza los últimos `ventana` ganadores
+    y predice sucesores basándose en frecuencias históricas.
+    Retorna lista ordenada de candidatos con detalles de patrón.
+    """
+    nums=[str(i).zfill(2) for i in range(100)]
+    primeras=[r["numeros"][0] for r in hist_lot_sorted if r.get("numeros")]
+    T=len(primeras)
+    if T<20: return []
+
+    trans,trans_dec=construir_matrices_transicion(primeras)
+    ultimos=primeras[-ventana:]
+    ultimo=ultimos[-1]
+    scores=Counter()
+
+    # Pesos por lag: cuanto más reciente el "disparador", mayor peso
+    pesos_lag={1:1.0, 2:0.50, 3:0.25, 5:0.10}
+
+    for pos_back,num in enumerate(reversed(ultimos)):
+        lag_aplicado=pos_back+1  # este número está a lag_aplicado sorteos del próximo
+        if lag_aplicado>5: break
+        peso_recencia=1.0/(2**pos_back)  # 1, 0.5, 0.25 ...
+
+        for lag_hist,[lag_key,w_lag] in enumerate([[lag_aplicado,pesos_lag.get(lag_aplicado,0.05)]]):
+            total_t=sum(trans[lag_key][num].values()) or 1
+            for suc,freq in trans[lag_key][num].items():
+                scores[suc]+=( freq/total_t)*w_lag*peso_recencia*100
+
+        # Patrón de decena (solo lag-1 del número más reciente)
+        if pos_back==0:
+            dec=str(int(num)//10)
+            total_dec=sum(trans_dec[dec].values()) or 1
+            for dec_suc,freq_dec in trans_dec[dec].items():
+                prob_dec=(freq_dec/total_dec)*0.40*100
+                for j in range(10):
+                    cand=str(int(dec_suc)*10+j).zfill(2)
+                    scores[cand]+=prob_dec/10
+
+    if not scores: return []
+    max_sc=max(scores.values()) or 1
+
+    resultado=[]
+    for n in nums:
+        sc=scores.get(n,0)
+        if sc<=0: continue
+        # Detalle lag-1 directo del último número
+        total_lag1=sum(trans[1][ultimo].values()) or 1
+        freq_lag1=trans[1][ultimo].get(n,0)
+        pct_lag1=round(freq_lag1/total_lag1*100,1)
+        # Detalle decena
+        dec_ult=str(int(ultimo)//10)
+        dec_cand=str(int(n)//10)
+        total_dec_ult=sum(trans_dec[dec_ult].values()) or 1
+        freq_dec=trans_dec[dec_ult].get(dec_cand,0)
+        pct_dec=round(freq_dec/total_dec_ult*100,1)
+        # Cuántos sorteos atrás fue la última vez que N siguió al patrón
+        contexto_str=[]
+        for lag in [1,2,3]:
+            f=trans[lag][ultimo].get(n,0)
+            if f: contexto_str.append(f"L{lag}:{f}x")
+        resultado.append({
+            "numero":n,
+            "score_suc":round((sc/max_sc)*100,2),
+            "score_raw":round(sc,4),
+            "freq_lag1":freq_lag1,
+            "pct_lag1":pct_lag1,
+            "pct_dec":pct_dec,
+            "decena":dec_cand,
+            "patron":"+".join(contexto_str) if contexto_str else "DEC"
+        })
+    resultado.sort(key=lambda x:x["score_suc"],reverse=True)
+    return resultado[:30]
+
 def estadisticas_1ra_v5(loteria,registros_biblia):
     regs=[r for r in (registros_biblia or []) if r.get("loteria")==loteria]
     regs.sort(key=lambda x:x.get("fecha",""))
@@ -815,6 +914,30 @@ def grafica_anguila():
             "warmup_n":warmup_n,"warmup_fecha":warmup_fecha})
     except Exception as e: return jsonify({"error":str(e)})
 
+@app.route("/sucesor_anguila")
+def sucesor_anguila():
+    try:
+        _,registros,_=leer_toda_biblia()
+        nombre_obj=nombre_objetivo_en_biblia(registros)
+        if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
+        regs=[r for r in registros if r.get("loteria")==nombre_obj]
+        regs.sort(key=lambda x:x.get("fecha",""))
+        if len(regs)<20: return jsonify({"error":"Insuficientes datos históricos (min 20 sorteos)"})
+        primeras=[r["numeros"][0] for r in regs if r.get("numeros")]
+        ultimos=primeras[-8:]
+        top=predecir_sucesor(regs,ventana=8)
+        # También construir tabla de decenas para mostrar en UI
+        trans,trans_dec=construir_matrices_transicion(primeras)
+        ultimo=primeras[-1] if primeras else "00"
+        dec_ult=str(int(ultimo)//10)
+        total_dec=sum(trans_dec[dec_ult].values()) or 1
+        tabla_decenas=[{"decena":d,"freq":f,"pct":round(f/total_dec*100,1)}
+            for d,f in sorted(trans_dec[dec_ult].items(),key=lambda x:-x[1])]
+        return jsonify({"loteria":nombre_obj,"total_hist":len(regs),
+            "ultimo_numero":ultimo,"ultimos_8":ultimos,"top_sucesor":top,
+            "tabla_decenas":tabla_decenas,"generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    except Exception as e: return jsonify({"error":str(e)})
+
 @app.route("/heatmap_anguila")
 def heatmap_anguila():
     try:
@@ -987,8 +1110,11 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div class="log hidden" id="ap-log">Esperando aprendizaje...</div>
 </div>
 
-<!-- BOTÓN ANALIZAR -->
-<button class="btn-green" onclick="analizar()" style="margin-bottom:12px;border-radius:9px;border:none;font-size:16px;font-weight:bold;padding:16px;">⚡ ANALIZAR + PREDECIR</button>
+<!-- BOTONES ACCIÓN -->
+<div style="display:flex;gap:8px;margin-bottom:12px;">
+  <button class="btn-green" onclick="analizar()" style="flex:1;border-radius:9px;border:none;font-size:15px;font-weight:bold;padding:15px;">⚡ ANALIZAR + PREDECIR</button>
+  <button style="flex:1;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:bold;padding:15px;cursor:pointer;" onclick="analizarSucesor()">🔄 PATRÓN SUCESOR</button>
+</div>
 <div id="msg-analizar" class="err hidden"></div>
 
 <!-- MÉTRICAS -->
@@ -1029,6 +1155,22 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div class="card-title">🏆 Top Predicciones IA</div>
   <div style="font-size:11px;color:#4a7fa0;margin-bottom:6px;" id="pred-meta">—</div>
   <div id="pred-grid" class="pred-grid"></div>
+</div>
+
+<!-- SUCESOR PATRÓN -->
+<div class="card hidden" id="card-sucesor">
+  <div class="card-title">🔄 Patrón Sucesor — Histórico Completo</div>
+  <div style="font-size:11px;color:#4a7fa0;margin-bottom:6px;" id="suc-meta">—</div>
+  <div style="margin-bottom:10px;">
+    <div style="font-size:11px;color:#6a8fa0;margin-bottom:4px;">CADENA RECIENTE (8 sorteos):</div>
+    <div id="suc-cadena" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+  </div>
+  <div style="margin-bottom:10px;">
+    <div style="font-size:11px;color:#6a8fa0;margin-bottom:4px;">DECENAS QUE SIGUIERON AL ÚLTIMO:</div>
+    <div id="suc-decenas" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+  </div>
+  <div style="font-size:11px;color:#6a8fa0;margin-bottom:6px;">TOP PROBABLES SEGÚN PATRONES HISTÓRICOS:</div>
+  <div id="suc-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;"></div>
 </div>
 
 <!-- HEATMAP -->
@@ -1146,6 +1288,72 @@ async function analizar(){
     if(!dh.error){pintarHeatmap(dh);}
 
   } catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+// ═══════════════════════════════════════════
+// PATRÓN SUCESOR
+// ═══════════════════════════════════════════
+async function analizarSucesor(){
+  const msg=document.getElementById("msg-analizar");
+  msg.className="success-msg"; msg.textContent="⏳ Buscando patrones sucesores..."; msg.classList.remove("hidden");
+  try{
+    const r=await fetch("/sucesor_anguila");
+    const d=await r.json();
+    if(d.error){msg.className="err"; msg.textContent="❌ "+d.error; return;}
+    pintarSucesor(d);
+    msg.textContent="✅ Patrón sucesor listo · "+d.generado;
+  }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+function pintarSucesor(d){
+  const card=document.getElementById("card-sucesor");
+  card.classList.remove("hidden");
+  document.getElementById("suc-meta").textContent=
+    `${d.total_hist} sorteos históricos · Último ganador: ${d.ultimo_numero} · ${d.generado}`;
+
+  // Cadena de últimos 8
+  const cadena=document.getElementById("suc-cadena");
+  cadena.innerHTML="";
+  (d.ultimos_8||[]).forEach((n,i)=>{
+    const isLast=i===d.ultimos_8.length-1;
+    const el=document.createElement("div");
+    el.style.cssText=`background:${isLast?"#00d4ff22":"#1e3350"};border:1px solid ${isLast?"#00d4ff":"#2a4a70"};border-radius:6px;padding:6px 10px;font-family:monospace;font-size:15px;font-weight:bold;color:${isLast?"#00d4ff":"#b0cce0"};`;
+    el.textContent=n;
+    cadena.appendChild(el);
+    if(!isLast){const arr=document.createElement("span");arr.textContent="→";arr.style.cssText="color:#2a4a70;line-height:30px;font-size:14px;";cadena.appendChild(arr);}
+  });
+  // Flecha final
+  const fq=document.createElement("span");fq.textContent="→ ?";fq.style.cssText="color:#00d4ff;line-height:30px;font-size:15px;font-weight:bold;";cadena.appendChild(fq);
+
+  // Tabla de decenas
+  const decDiv=document.getElementById("suc-decenas");
+  decDiv.innerHTML="";
+  (d.tabla_decenas||[]).slice(0,10).forEach(td=>{
+    const el=document.createElement("div");
+    const dec=Number(td.decena)*10;
+    el.style.cssText=`background:#0b1624;border:1px solid #1e3350;border-radius:6px;padding:5px 8px;text-align:center;min-width:52px;`;
+    el.innerHTML=`<div style="font-size:13px;font-weight:bold;color:#00d4ff;font-family:monospace;">${String(dec).padStart(2,"0")}s</div><div style="font-size:10px;color:#ffaa00;">${td.pct}%</div><div style="font-size:9px;color:#4a7fa0;">${td.freq}x</div>`;
+    decDiv.appendChild(el);
+  });
+
+  // Grid de candidatos
+  const grid=document.getElementById("suc-grid");
+  grid.innerHTML="";
+  (d.top_sucesor||[]).slice(0,20).forEach((c,i)=>{
+    const el=document.createElement("div");
+    const rankColor=i<3?"#ffd700":i<7?"#00d4ff":i<12?"#00e090":"#4a7fa0";
+    el.style.cssText=`background:#060b14;border:1.5px solid ${rankColor}44;border-radius:9px;padding:10px 6px;text-align:center;position:relative;`;
+    const barW=Math.max(4,c.score_suc);
+    el.innerHTML=`
+      <div style="position:absolute;top:0;left:0;width:${barW}%;height:3px;background:${rankColor};border-radius:9px 9px 0 0;opacity:.7;"></div>
+      <div style="font-size:9px;color:${rankColor};margin-bottom:2px;">#${i+1}</div>
+      <div style="font-size:26px;font-weight:bold;color:#e8f4ff;font-family:monospace;line-height:1.1;">${c.numero}</div>
+      <div style="font-size:9px;color:#ffaa00;margin-top:2px;">${c.score_suc}pts</div>
+      <div style="font-size:9px;color:#4a7fa0;margin-top:2px;">L1:${c.pct_lag1}% DEC:${c.pct_dec}%</div>
+      <div style="font-size:8px;color:#2a4a60;margin-top:1px;">${c.patron||""}</div>`;
+    grid.appendChild(el);
+  });
+  grid.scrollIntoView({behavior:"smooth",block:"start"});
 }
 
 // ═══════════════════════════════════════════
