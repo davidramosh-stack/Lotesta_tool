@@ -1057,6 +1057,93 @@ def mismo_dia_anguila():
         })
     except Exception as e: return jsonify({"error":str(e)})
 
+@app.route("/espejos_anguila")
+def espejos_anguila():
+    """Motor de Espejos: números que salieron en 1ra de Anguilla día D
+    y repitieron en 1ra del 10AM el día D+1. Analiza toda la Biblia."""
+    try:
+        _,registros,_=leer_toda_biblia()
+        nombre_obj=nombre_objetivo_en_biblia(registros)
+        if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
+        _,por_fecha,_=preparar_indices(registros)
+        fechas_sorted=sorted(por_fecha.keys())
+        # ── Construir tabla de espejos ────────────────────────────────────────
+        apariciones=Counter()   # cuántas veces n apareció en 1ra de Anguilla ayer
+        repetidos=Counter()     # de esas, cuántas veces n salió en 1ra de 10AM hoy
+        dias_analizados=0
+        for i in range(len(fechas_sorted)-1):
+            fecha_d   = fechas_sorted[i]
+            fecha_d1  = fechas_sorted[i+1]
+            # Solo días consecutivos (D y D+1)
+            try:
+                dd  = datetime.strptime(fecha_d,  "%Y-%m-%d")
+                dd1 = datetime.strptime(fecha_d1, "%Y-%m-%d")
+                if (dd1-dd).days != 1: continue
+            except: continue
+            # Números en 1ra de todos los sorteos Anguilla en el día D
+            nums_1ra_d=set()
+            for rr in por_fecha.get(fecha_d,[]):
+                if es_anguila_cualquiera(rr.get("loteria","")):
+                    nums=rr.get("numeros",[])
+                    if nums: nums_1ra_d.add(nums[0])
+            if not nums_1ra_d: continue
+            # 1ra del 10AM en el día D+1
+            ganador_10am=None
+            for rr in por_fecha.get(fecha_d1,[]):
+                if es_objetivo(rr.get("loteria","")):
+                    nums=rr.get("numeros",[])
+                    if nums: ganador_10am=nums[0]; break
+            if not ganador_10am: continue
+            dias_analizados+=1
+            for n in nums_1ra_d:
+                apariciones[n]+=1
+                if n==ganador_10am:
+                    repetidos[n]+=1
+        # ── Tabla de espejos (mínimo 8 apariciones para ser confiable) ────────
+        MIN_AP=8
+        tabla=[]
+        for n in [str(i).zfill(2) for i in range(100)]:
+            ap=apariciones[n]
+            if ap<MIN_AP: continue
+            rep=repetidos[n]
+            tasa=rep/ap
+            tabla.append({"numero":n,"apariciones":ap,"repetidos":rep,
+                          "tasa":round(tasa,4),"pct":round(tasa*100,1)})
+        tabla.sort(key=lambda x:-x["tasa"])
+        # ── Candidatos de hoy (números en 1ra Anguilla ayer) ─────────────────
+        hoy=datetime.now().strftime("%Y-%m-%d")
+        ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
+        nums_ayer_1ra={}
+        for rr in por_fecha.get(ayer,[]):
+            if es_anguila_cualquiera(rr.get("loteria","")):
+                nums=rr.get("numeros",[])
+                if nums:
+                    n=nums[0]
+                    nombre_sorteo=rr.get("loteria","")
+                    if n not in nums_ayer_1ra: nums_ayer_1ra[n]=[]
+                    nums_ayer_1ra[n].append(nombre_sorteo)
+        candidatos_hoy=[]
+        for n,sorteos in nums_ayer_1ra.items():
+            esp=next((x for x in tabla if x["numero"]==n),None)
+            candidatos_hoy.append({
+                "numero":n,"sorteos_ayer":sorteos[:6],
+                "veces_ayer":len(sorteos),
+                "tasa":esp["tasa"] if esp else 0,
+                "pct":esp["pct"] if esp else 0,
+                "apariciones":esp["apariciones"] if esp else 0,
+                "repetidos":esp["repetidos"] if esp else 0,
+                "en_tabla":esp is not None
+            })
+        candidatos_hoy.sort(key=lambda x:(-x["veces_ayer"],-x["tasa"]))
+        return jsonify({
+            "tabla_espejos":tabla[:25],
+            "candidatos_hoy":candidatos_hoy,
+            "dias_analizados":dias_analizados,
+            "ayer":ayer,"hoy":hoy,
+            "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    except Exception as e: return jsonify({"error":str(e)})
+
 @app.route("/heatmap_anguila")
 def heatmap_anguila():
     try:
@@ -1244,10 +1331,13 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
 
 <!-- BOTONES ACCIÓN -->
 <button onclick="analizarCombo()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#d97706,#b45309);color:#fff;border:none;border-radius:10px;font-size:17px;font-weight:900;padding:17px;cursor:pointer;letter-spacing:.5px;margin-bottom:8px;box-shadow:0 0 18px #f59e0b44;">🎯 COMBO IA + SUCESOR</button>
-<div style="display:flex;gap:8px;margin-bottom:12px;">
+<div style="display:flex;gap:8px;margin-bottom:8px;">
   <button class="btn-green" onclick="analizar()" style="flex:1;border-radius:9px;border:none;font-size:13px;font-weight:bold;padding:12px;">⚡ Solo V5</button>
   <button style="flex:1;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:bold;padding:12px;cursor:pointer;" onclick="analizarSucesor()">🔄 Solo Sucesor</button>
+</div>
+<div style="display:flex;gap:8px;margin-bottom:12px;">
   <button style="flex:1;background:linear-gradient(135deg,#c2410c,#ea580c);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:bold;padding:12px;cursor:pointer;" onclick="cargarMismoDia()">🔥 HOT DÍA</button>
+  <button style="flex:1;background:linear-gradient(135deg,#7e22ce,#c084fc);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:bold;padding:12px;cursor:pointer;" onclick="cargarEspejos()">🪞 ESPEJOS</button>
 </div>
 <div id="msg-analizar" class="err hidden"></div>
 
@@ -1323,6 +1413,20 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div style="font-size:11px;color:#4a7fa0;margin-bottom:4px;">Color = frecuencia en 1ra posición. Toca para ver detalle.</div>
   <div id="heatmap-grid" class="heatmap-grid"></div>
   <div class="hm-tip" id="hm-tip"></div>
+</div>
+
+<!-- ESPEJOS HISTÓRICOS -->
+<div class="card hidden" id="card-espejos">
+  <div class="card-title" style="color:#c084fc;">🪞 ESPEJOS HISTÓRICOS — Día D → 10AM D+1</div>
+  <div style="font-size:11px;color:#4a7fa0;margin-bottom:10px;" id="esp-meta">—</div>
+  <div style="margin-bottom:14px;">
+    <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">⚡ CANDIDATOS DE HOY (salieron ayer en 1ra de Anguilla):</div>
+    <div id="esp-candidatos" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+  </div>
+  <div>
+    <div style="font-size:12px;color:#c084fc;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">🏆 MEJORES ESPEJOS HISTÓRICOS (1ra → 10AM):</div>
+    <div id="esp-tabla" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px;"></div>
+  </div>
 </div>
 
 <!-- ANGUILLA MISMO DÍA HOT -->
@@ -1588,6 +1692,71 @@ function pintarSucesor(d){
     grid.appendChild(el);
   });
   grid.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+// ═══════════════════════════════════════════
+// ESPEJOS HISTÓRICOS
+// ═══════════════════════════════════════════
+async function cargarEspejos(){
+  const msg=document.getElementById("msg-analizar");
+  msg.className="success-msg"; msg.textContent="⏳ Calculando espejos históricos..."; msg.classList.remove("hidden");
+  try{
+    const r=await fetch("/espejos_anguila");
+    const d=await r.json();
+    if(d.error){msg.className="err"; msg.textContent="❌ "+d.error; return;}
+    pintarEspejos(d);
+    msg.textContent="✅ Espejos históricos listos · "+d.generado;
+  }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+function pintarEspejos(d){
+  const card=document.getElementById("card-espejos");
+  card.classList.remove("hidden");
+  document.getElementById("esp-meta").textContent=
+    `📊 ${d.dias_analizados} días analizados · Ayer: ${d.ayer} · ${d.generado}`;
+
+  // ── Candidatos de hoy (los que estuvieron en 1ra Anguilla ayer) ──────────
+  const candDiv=document.getElementById("esp-candidatos");
+  candDiv.innerHTML="";
+  const cands=d.candidatos_hoy||[];
+  if(cands.length===0){
+    candDiv.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin datos de ayer (carga primero la Biblia de ayer)</div>';
+  } else {
+    cands.forEach(c=>{
+      const pct=c.pct||0;
+      const calor=pct>=25?"#ff3300":pct>=18?"#ff8800":pct>=12?"#f59e0b":pct>=7?"#00d4ff":"#4a7fa0";
+      const estrella=c.veces_ayer>=3?"🔥":c.veces_ayer>=2?"⚡":"";
+      const el=document.createElement("div");
+      el.style.cssText=`background:#0d0520;border:2px solid ${calor};border-radius:12px;padding:10px 12px;text-align:center;min-width:74px;box-shadow:0 0 8px ${calor}44;`;
+      el.innerHTML=
+        `<div style="font-size:10px;color:${calor};font-weight:bold;">${estrella}${c.veces_ayer}× ayer</div>`+
+        `<div style="font-size:32px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;">${c.numero}</div>`+
+        `<div style="font-size:13px;color:${calor};font-weight:bold;margin-top:2px;">${pct.toFixed(1)}%</div>`+
+        `<div style="font-size:9px;color:#4a7fa0;margin-top:2px;">${c.repetidos||0}/${c.apariciones||0} hist</div>`;
+      candDiv.appendChild(el);
+    });
+  }
+
+  // ── Tabla histórica de mejores espejos ───────────────────────────────────
+  const tabDiv=document.getElementById("esp-tabla");
+  tabDiv.innerHTML="";
+  (d.tabla_espejos||[]).slice(0,20).forEach((e,i)=>{
+    const calor=e.pct>=25?"#ff3300":e.pct>=18?"#ff8800":e.pct>=12?"#f59e0b":e.pct>=7?"#c084fc":"#4a7fa0";
+    const rankColor=i===0?"#ffd700":i<3?"#f59e0b":i<8?"#c084fc":"#4a7fa0";
+    const el=document.createElement("div");
+    el.style.cssText=`background:#0a0318;border:1.5px solid ${calor}55;border-radius:9px;padding:8px 6px;text-align:center;`;
+    // Barra de probabilidad
+    const barW=Math.round(e.pct);
+    el.innerHTML=
+      `<div style="font-size:9px;color:${rankColor};">#${i+1}</div>`+
+      `<div style="font-size:24px;font-weight:bold;color:#e8f4ff;font-family:monospace;">${e.numero}</div>`+
+      `<div style="height:4px;background:#1e3350;border-radius:2px;margin:4px 0;"><div style="height:100%;width:${barW}%;background:${calor};border-radius:2px;"></div></div>`+
+      `<div style="font-size:12px;color:${calor};font-weight:bold;">${e.pct}%</div>`+
+      `<div style="font-size:9px;color:#4a7fa0;">${e.repetidos}/${e.apariciones}</div>`;
+    tabDiv.appendChild(el);
+  });
+
+  card.scrollIntoView({behavior:"smooth",block:"start"});
 }
 
 // ═══════════════════════════════════════════
