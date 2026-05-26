@@ -1059,121 +1059,101 @@ def mismo_dia_anguila():
 
 @app.route("/espejos_anguila")
 def espejos_anguila():
-    """Motor de Espejos: números en 1ra+2da+3ra de TODOS los sorteos
-    Anguilla del día D que repiten en 1ra de cualquier Anguilla día D+1.
-    Analiza todos los pares consecutivos en la Biblia."""
+    """Motor de Espejos:
+    1. Score histórico de los 100 números basado en frecuencia en Anguilla
+    2. Los que salieron ayer en Anguilla (1ra+2da+3ra) → candidatos de hoy
+    3. Rankeados por su score histórico × veces que salieron ayer
+    4. Marca cuáles ya se confirmaron hoy en 1ra de algún sorteo Anguilla
+    """
     try:
         _,registros,_=leer_toda_biblia()
         nombre_obj=nombre_objetivo_en_biblia(registros)
         if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
         _,por_fecha,_=preparar_indices(registros)
-        fechas_sorted=sorted(por_fecha.keys())
-        # ── Matrices por posición de origen ──────────────────────────────────
-        # ap_pos[p][n]  = veces que n apareció en posición p de Anguilla en día D
-        # rep_pos[p][n] = de esas, cuántas veces n salió en 1ra de Anguilla D+1
-        ap_pos={0:Counter(),1:Counter(),2:Counter()}
-        rep_pos={0:Counter(),1:Counter(),2:Counter()}
-        ap_total=Counter()   # cualquier posición día D
-        rep_total=Counter()  # → 1ra de Anguilla día D+1
-        dias_analizados=0
-        for i in range(len(fechas_sorted)-1):
-            fecha_d  = fechas_sorted[i]
-            fecha_d1 = fechas_sorted[i+1]
-            try:
-                dd  = datetime.strptime(fecha_d,  "%Y-%m-%d")
-                dd1 = datetime.strptime(fecha_d1, "%Y-%m-%d")
-                if (dd1-dd).days != 1: continue
-            except: continue
-            # Números por posición en todos los sorteos Anguilla del día D
-            nums_d={0:set(),1:set(),2:set()}
-            for rr in por_fecha.get(fecha_d,[]):
-                if es_anguila_cualquiera(rr.get("loteria","")):
-                    for pos,n in enumerate((rr.get("numeros") or [])[:3]):
-                        if n: nums_d[pos].add(n)
-            todos_d=nums_d[0]|nums_d[1]|nums_d[2]
-            if not todos_d: continue
-            # 1ras de TODOS los sorteos Anguilla del día D+1
-            nums_1ra_d1=set()
-            for rr in por_fecha.get(fecha_d1,[]):
-                if es_anguila_cualquiera(rr.get("loteria","")):
-                    nn=rr.get("numeros",[])
-                    if nn: nums_1ra_d1.add(nn[0])
-            if not nums_1ra_d1: continue
-            dias_analizados+=1
-            for pos in [0,1,2]:
-                for n in nums_d[pos]:
-                    ap_pos[pos][n]+=1
-                    if n in nums_1ra_d1: rep_pos[pos][n]+=1
-            for n in todos_d:
-                ap_total[n]+=1
-                if n in nums_1ra_d1: rep_total[n]+=1
-        # ── Tabla de espejos (mínimo 10 apariciones) ─────────────────────────
-        MIN_AP=10
-        tabla=[]
-        for n in [str(i).zfill(2) for i in range(100)]:
-            ap=ap_total[n]
-            if ap<MIN_AP: continue
-            rep=rep_total[n]; tasa=rep/ap
-            # Tasa por posición de origen
-            rates={}
-            for pos,lbl in [(0,"1ra"),(1,"2da"),(2,"3ra")]:
-                a=ap_pos[pos][n]; r=rep_pos[pos][n]
-                rates[lbl]={"ap":a,"rep":r,"pct":round(r/a*100,1) if a>=5 else None}
-            tabla.append({"numero":n,"apariciones":ap,"repetidos":rep,
-                          "tasa":round(tasa,4),"pct":round(tasa*100,1),
-                          "por_posicion":rates})
-        tabla.sort(key=lambda x:-x["tasa"])
-        # ── Candidatos de hoy: todos los números (1ra+2da+3ra) Anguilla ayer ─
+        # ── Score histórico de los 100 números ───────────────────────────────
+        # Usa TODOS los sorteos Anguilla que haya en la Biblia (aunque sea 2026)
+        regs_ang=[r for r in registros if es_anguila_cualquiera(r.get("loteria",""))]
+        regs_ang.sort(key=lambda x:x.get("fecha",""))
+        T=max(len(regs_ang),1)
+        f1=Counter(); f2=Counter(); f3=Counter()
+        # Recencia: bonus extra por apariciones en los últimos 45 sorteos
+        rec45=[r for r in regs_ang[-45:]] if len(regs_ang)>=45 else regs_ang
+        f_rec=Counter()
+        for rr in regs_ang:
+            nums=(rr.get("numeros") or [])[:3]
+            for pos,n in enumerate(nums):
+                if not n: continue
+                if pos==0: f1[n]+=1
+                elif pos==1: f2[n]+=1
+                elif pos==2: f3[n]+=1
+        for rr in rec45:
+            for n in (rr.get("numeros") or [])[:3]:
+                if n: f_rec[n]+=1
+        nums100=[str(i).zfill(2) for i in range(100)]
+        scores={}
+        for n in nums100:
+            # Ponderado: 1ra vale 3×, 2da vale 2×, 3ra vale 1×, normalizado por total
+            s=(f1[n]/T)*300 + (f2[n]/T)*150 + (f3[n]/T)*80
+            s+=f_rec[n]*6   # bonus recencia últimos 45
+            scores[n]=round(s,4)
+        max_score=max(scores.values()) or 1
+        # Tabla de todos los 100 números ordenada por score
+        tabla_100=[]
+        for n in nums100:
+            sc=scores[n]; tot=f1[n]+f2[n]+f3[n]
+            tabla_100.append({"numero":n,"score":sc,"score_pct":round(sc/max_score*100,1),
+                               "f1":f1[n],"f2":f2[n],"f3":f3[n],"total":tot,"rec45":f_rec[n]})
+        tabla_100.sort(key=lambda x:-x["score"])
+        for i,item in enumerate(tabla_100): item["rank"]=i+1
+        rank_map={x["numero"]:x["rank"] for x in tabla_100}
+        # ── Ayer: todos los sorteos Anguilla ─────────────────────────────────
         hoy=datetime.now().strftime("%Y-%m-%d")
         ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
-        nums_ayer_bypos={0:{},1:{},2:{}}
+        nums_ayer={}  # n -> {"1ra":["10AM","12PM",...], "2da":[...], "3ra":[...]}
         for rr in por_fecha.get(ayer,[]):
-            if es_anguila_cualquiera(rr.get("loteria","")):
-                sname=rr.get("loteria","")
-                for pos,n in enumerate((rr.get("numeros") or [])[:3]):
-                    if n:
-                        if n not in nums_ayer_bypos[pos]: nums_ayer_bypos[pos][n]=[]
-                        nums_ayer_bypos[pos][n].append(sname)
-        todos_ayer=set()
-        for pos in [0,1,2]: todos_ayer.update(nums_ayer_bypos[pos].keys())
-        candidatos_raw=[]
-        for n in todos_ayer:
-            esp=next((x for x in tabla if x["numero"]==n),None)
-            posiciones=[]
-            for pos,lbl in [(0,"1ra"),(1,"2da"),(2,"3ra")]:
-                if n in nums_ayer_bypos[pos]:
-                    posiciones.append({"pos":lbl,"veces":len(nums_ayer_bypos[pos][n]),
-                                       "sorteos":[s.replace("Anguilla ","").replace("Anguila ","") for s in nums_ayer_bypos[pos][n][:5]]})
-            tot_ayer=sum(p["veces"] for p in posiciones)
-            pct=esp["pct"] if esp else 0
-            ap=esp["apariciones"] if esp else 0
-            # score_espejo: combina tasa histórica × peso de apariciones ayer
-            # Solo confiable si tiene suficiente historia (ap>=10) y tasa > base (~13%)
-            import math as _math
-            score_esp=round(pct*_math.log2(tot_ayer+2),4) if esp and ap>=10 else 0
-            candidatos_raw.append({
-                "numero":n,"posiciones_ayer":posiciones,
-                "total_apariciones_ayer":tot_ayer,
-                "tasa":esp["tasa"] if esp else 0,
-                "pct":pct,"score_espejo":score_esp,
-                "apariciones":ap,
-                "repetidos":esp["repetidos"] if esp else 0,
-                "por_posicion":esp["por_posicion"] if esp else {},
-                "en_tabla":esp is not None and ap>=10
+            if not es_anguila_cualquiera(rr.get("loteria","")): continue
+            hora=rr.get("loteria","").replace("Anguilla ","").replace("Anguila ","")
+            for pos,n in enumerate((rr.get("numeros") or [])[:3]):
+                if not n: continue
+                lbl=["1ra","2da","3ra"][pos]
+                if n not in nums_ayer: nums_ayer[n]={"1ra":[],"2da":[],"3ra":[]}
+                nums_ayer[n][lbl].append(hora)
+        # ── Hoy: cuáles ya se confirmaron en 1ra de Anguilla ─────────────────
+        confirmados={}  # n -> [sorteos donde ya salió hoy en 1ra]
+        for rr in por_fecha.get(hoy,[]):
+            if not es_anguila_cualquiera(rr.get("loteria","")): continue
+            nn=rr.get("numeros",[])
+            if nn:
+                n=nn[0]; hora=rr.get("loteria","").replace("Anguilla ","").replace("Anguila ","")
+                if n not in confirmados: confirmados[n]=[]
+                confirmados[n].append(hora)
+        # ── Candidatos de hoy: TODOS los que salieron ayer, sin filtro ───────
+        candidatos_hoy=[]
+        for n,pos_map in nums_ayer.items():
+            sc=scores.get(n,0)
+            rank=rank_map.get(n,99)
+            tot_ayer=sum(len(v) for v in pos_map.values())
+            posiciones=[{"pos":lbl,"veces":len(v),"sorteos":v[:5]}
+                        for lbl,v in pos_map.items() if v]
+            # Score candidato = score histórico boosteado por cuántas veces salió ayer
+            boost=1.0+(tot_ayer-1)*0.20  # cada aparición extra ayer suma 20%
+            score_cand=round(sc*boost,4)
+            candidatos_hoy.append({
+                "numero":n,"score_hist":sc,"score_hist_pct":round(sc/max_score*100,1),
+                "score_cand":score_cand,"rank_hist":rank,
+                "posiciones_ayer":posiciones,"total_ayer":tot_ayer,
+                "f1":f1[n],"f2":f2[n],"f3":f3[n],"rec45":f_rec[n],
+                "confirmado_hoy":n in confirmados,
+                "confirmado_sorteos":confirmados.get(n,[])
             })
-        # ── Filtro: solo con historia suficiente y tasa por encima del azar ──
-        # Con ~15 sorteos Anguilla/día, la tasa base es ~15 nums únicos / 99 ≈ 15%
-        # Solo mostramos los que superan esa base O aparecieron 3+ veces ayer
-        TASA_MINIMA=15.0
-        candidatos_hoy=[c for c in candidatos_raw
-                        if c["en_tabla"] and (c["pct"]>=TASA_MINIMA or c["total_apariciones_ayer"]>=3)]
-        candidatos_hoy.sort(key=lambda x:-x["score_espejo"])
-        candidatos_hoy=candidatos_hoy[:12]  # top 12 seleccionados
+        # Confirmados primero → luego por score_cand desc
+        candidatos_hoy.sort(key=lambda x:(-int(x["confirmado_hoy"]),-x["score_cand"]))
         return jsonify({
-            "tabla_espejos":tabla[:30],
+            "tabla_100":tabla_100,
             "candidatos_hoy":candidatos_hoy,
-            "total_candidatos_raw":len(candidatos_raw),
-            "dias_analizados":dias_analizados,
+            "total_sorteos_anguila":T,
+            "total_candidatos":len(candidatos_hoy),
+            "confirmados_hoy":len(confirmados),
             "ayer":ayer,"hoy":hoy,
             "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
@@ -1455,8 +1435,8 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div class="card-title" style="color:#c084fc;">🪞 ESPEJOS HISTÓRICOS — Día D → 10AM D+1</div>
   <div style="font-size:11px;color:#4a7fa0;margin-bottom:10px;" id="esp-meta">—</div>
   <div style="margin-bottom:14px;">
-    <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">⚡ TOP ESPEJOS HOY — selección por fuerza histórica:</div>
-    <div style="font-size:10px;color:#4a7fa0;margin-bottom:6px;">Solo números con tasa &gt;15% histórica + suficiente historia · Ordenado por score espejo</div>
+    <div style="font-size:12px;color:#f59e0b;margin-bottom:4px;font-weight:bold;letter-spacing:1px;">⚡ CANDIDATOS HOY — salieron ayer en Anguilla, rankeados por fuerza histórica:</div>
+    <div style="font-size:10px;color:#4a7fa0;margin-bottom:6px;">Verde ✅ = ya confirmado hoy · Barra = % de fuerza vs el #1 histórico · ⚡🔥 = apareció varias veces ayer</div>
     <div id="esp-candidatos" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
   </div>
   <div>
@@ -1748,64 +1728,64 @@ async function cargarEspejos(){
 function pintarEspejos(d){
   const card=document.getElementById("card-espejos");
   card.classList.remove("hidden");
+  const conf=d.confirmados_hoy||0;
   document.getElementById("esp-meta").textContent=
-    `📊 ${d.dias_analizados} días analizados · Ayer: ${d.ayer} · `+
-    `${d.candidatos_hoy?.length||0} seleccionados de ${d.total_candidatos_raw||"?"} totales · ${d.generado}`;
+    `📊 ${d.total_sorteos_anguila} sorteos Anguilla · `+
+    `${d.total_candidatos} candidatos de ayer · `+
+    (conf>0?`✅ ${conf} confirmados hoy · `:`sin confirmaciones aún · `)+d.generado;
 
-  // ── Candidatos de HOY: números que estuvieron en Anguilla ayer (1ra+2da+3ra)
+  // ── TODOS los candidatos de ayer, ordenados por score ────────────────────
   const candDiv=document.getElementById("esp-candidatos");
   candDiv.innerHTML="";
-  const cands=d.candidatos_hoy||[];
-  if(cands.length===0){
-    candDiv.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin datos de Anguilla ayer</div>';
+  if(!(d.candidatos_hoy||[]).length){
+    candDiv.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin datos Anguilla ayer — carga la Biblia primero</div>';
   } else {
-    cands.forEach(c=>{
-      const pct=c.pct||0;
-      const tot=c.total_apariciones_ayer||1;
-      const calor=pct>=25?"#ff2200":pct>=18?"#ff7700":pct>=12?"#f59e0b":pct>=7?"#c084fc":"#4a7fa0";
-      const llama=tot>=5?"🔥🔥":tot>=3?"🔥":tot>=2?"⚡":"";
-      // Línea de posiciones de ayer
+    (d.candidatos_hoy||[]).forEach((c,i)=>{
+      const tot=c.total_ayer||1;
+      const pctH=c.score_hist_pct||0;
+      const conf=c.confirmado_hoy;
+      const rank=c.rank_hist||99;
+      const calor=conf?"#00ff88":rank<=10?"#ffd700":rank<=25?"#f59e0b":rank<=50?"#00d4ff":"#6a8fa0";
+      const borde=conf?"3px solid #00ff88":`1.5px solid ${calor}55`;
+      const glow=conf?"box-shadow:0 0 14px #00ff8866;":"";
+      const llama=tot>=4?"🔥🔥":tot>=3?"🔥":tot>=2?"⚡":"";
       const posHtml=(c.posiciones_ayer||[]).map(p=>{
         const col=p.pos==="1ra"?"#00e090":p.pos==="2da"?"#00d4ff":"#ffaa00";
-        return `<span style="background:#0a1525;border:1px solid ${col}44;border-radius:4px;padding:1px 4px;font-size:9px;color:${col};">${p.pos}×${p.veces}</span>`;
+        return `<span style="background:#0a1525;border:1px solid ${col}55;border-radius:4px;padding:1px 5px;font-size:9px;color:${col};">${p.pos}×${p.veces}</span>`;
       }).join(" ");
+      const confLabel=conf
+        ?`<div style="font-size:10px;color:#00ff88;font-weight:bold;margin-top:3px;">✅ ${(c.confirmado_sorteos||[]).join(", ")}</div>`:"";
       const el=document.createElement("div");
-      el.style.cssText=`background:#0d0520;border:2px solid ${calor};border-radius:12px;padding:10px 10px;text-align:center;min-width:78px;box-shadow:0 0 10px ${calor}33;`;
-      const scoreDisp=c.score_espejo>0?`<div style="font-size:9px;color:#c084fc;margin-top:2px;">⚡${c.score_espejo.toFixed(1)}</div>`:"";
+      el.style.cssText=`background:#04080f;border:${borde};border-radius:12px;padding:10px 10px;text-align:center;min-width:76px;${glow}`;
       el.innerHTML=
-        `<div style="font-size:10px;color:${calor};font-weight:bold;margin-bottom:2px;">${llama}${tot}× ayer</div>`+
-        `<div style="font-size:34px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;">${c.numero}</div>`+
-        `<div style="font-size:15px;color:${calor};font-weight:bold;margin:3px 0;">${pct>0?pct.toFixed(1)+"%":"—"}</div>`+
-        `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin-bottom:3px;">${posHtml}</div>`+
-        `<div style="font-size:9px;color:#4a7fa0;">${c.repetidos||0}/${c.apariciones||0} hist</div>`+
-        scoreDisp;
+        `<div style="font-size:9px;color:${calor};font-weight:bold;">${llama}#${rank}</div>`+
+        `<div style="font-size:34px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;margin:2px 0;">${c.numero}</div>`+
+        `<div style="height:3px;background:#1e3350;border-radius:2px;margin:3px 0;"><div style="height:100%;width:${pctH}%;background:${calor};border-radius:2px;"></div></div>`+
+        `<div style="font-size:10px;color:${calor};font-weight:bold;">${pctH.toFixed(0)}% fza</div>`+
+        `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin:3px 0;">${posHtml}</div>`+
+        `<div style="font-size:9px;color:#4a7fa0;">${c.f1||0}×1 ${c.f2||0}×2 ${c.f3||0}×3</div>`+
+        confLabel;
       candDiv.appendChild(el);
     });
   }
 
-  // ── Tabla histórica de mejores espejos ───────────────────────────────────
+  // ── TOP 20 ranking histórico de fuerza de los 100 números ────────────────
   const tabDiv=document.getElementById("esp-tabla");
   tabDiv.innerHTML="";
-  (d.tabla_espejos||[]).slice(0,24).forEach((e,i)=>{
-    const calor=e.pct>=25?"#ff2200":e.pct>=18?"#ff7700":e.pct>=12?"#f59e0b":e.pct>=7?"#c084fc":"#4a7fa0";
-    const rankColor=i===0?"#ffd700":i<3?"#f59e0b":i<8?"#c084fc":"#4a7fa0";
-    const barW=Math.min(100,Math.round(e.pct));
-    // por posición breakdown
-    const pp=e.por_posicion||{};
-    const posBar=["1ra","2da","3ra"].map(lbl=>{
-      const v=pp[lbl]; if(!v||v.pct==null) return "";
-      const col=lbl==="1ra"?"#00e090":lbl==="2da"?"#00d4ff":"#ffaa00";
-      return `<span style="font-size:8px;color:${col};">${lbl}:${v.pct}%</span>`;
-    }).filter(Boolean).join(" ");
+  (d.tabla_100||[]).slice(0,20).forEach((e,i)=>{
+    const calor=i===0?"#ffd700":i<3?"#f59e0b":i<8?"#00d4ff":i<15?"#c084fc":"#4a7fa0";
+    const barW=Math.round(e.score_pct||0);
+    const esConf=(d.candidatos_hoy||[]).some(c=>c.numero===e.numero&&c.confirmado_hoy);
+    const esActivo=(d.candidatos_hoy||[]).some(c=>c.numero===e.numero);
+    const borde=esConf?"2px solid #00ff88":esActivo?`2px solid ${calor}`:`1px solid ${calor}33`;
     const el=document.createElement("div");
-    el.style.cssText=`background:#0a0318;border:1.5px solid ${calor}55;border-radius:9px;padding:8px 5px;text-align:center;`;
+    el.style.cssText=`background:#04080f;border:${borde};border-radius:9px;padding:7px 5px;text-align:center;${esConf?"box-shadow:0 0 8px #00ff8844;":""}`;
     el.innerHTML=
-      `<div style="font-size:9px;color:${rankColor};">#${i+1}</div>`+
-      `<div style="font-size:24px;font-weight:bold;color:#e8f4ff;font-family:monospace;">${e.numero}</div>`+
-      `<div style="height:4px;background:#1e3350;border-radius:2px;margin:4px 0;"><div style="height:100%;width:${barW}%;background:${calor};border-radius:2px;"></div></div>`+
-      `<div style="font-size:13px;color:${calor};font-weight:bold;">${e.pct}%</div>`+
-      `<div style="font-size:8px;color:#4a7fa0;">${e.repetidos}/${e.apariciones}</div>`+
-      (posBar?`<div style="margin-top:3px;display:flex;gap:2px;justify-content:center;flex-wrap:wrap;">${posBar}</div>`:"");
+      `<div style="font-size:9px;color:${calor};">#${i+1}${esConf?" ✅":esActivo?" ⚡":""}</div>`+
+      `<div style="font-size:22px;font-weight:bold;color:#e8f4ff;font-family:monospace;">${e.numero}</div>`+
+      `<div style="height:3px;background:#1e3350;border-radius:2px;margin:3px 0;"><div style="height:100%;width:${barW}%;background:${calor};border-radius:2px;"></div></div>`+
+      `<div style="font-size:10px;color:${calor};font-weight:bold;">${e.score_pct}%</div>`+
+      `<div style="font-size:8px;color:#4a7fa0;">${e.f1}·${e.f2}·${e.f3}</div>`;
     tabDiv.appendChild(el);
   });
 
