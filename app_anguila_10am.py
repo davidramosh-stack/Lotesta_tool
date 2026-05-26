@@ -1538,7 +1538,9 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
     <!-- Filtro por hora -->
     <div style="margin-bottom:8px;">
       <div style="font-size:11px;color:#6a8fa0;margin-bottom:5px;">🕐 Filtrar por hora del próximo sorteo:</div>
-      <div id="esp-hora-filtros" style="display:flex;gap:5px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:6px;-webkit-overflow-scrolling:touch;scrollbar-width:thin;"></div>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;scrollbar-width:thin;">
+        <div id="esp-hora-filtros" style="display:flex;flex-direction:row;flex-wrap:nowrap;gap:5px;min-width:max-content;padding-bottom:6px;padding-right:4px;"></div>
+      </div>
     </div>
     <div id="esp-candidatos" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
   </div>
