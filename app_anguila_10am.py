@@ -28,6 +28,12 @@ def es_objetivo(nombre):
         if a in n: return True
     return False
 
+def es_anguila_cualquiera(nombre):
+    """Detecta CUALQUIER sorteo Anguilla (los ~15 sorteos por día), no solo 10AM."""
+    n=(nombre or "").lower().strip()
+    n=n.replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
+    return "anguill" in n or "anguil" in n
+
 def nombre_objetivo_en_biblia(registros):
     for r in registros:
         if es_objetivo(r.get("loteria","")):
@@ -192,9 +198,21 @@ def calcular_score_candidatos(hist_lot,fecha_actual,por_fecha):
         d_actual=datetime.strptime(fecha_actual,"%Y-%m-%d")
         ayer=(d_actual-timedelta(days=1)).strftime("%Y-%m-%d")
     except: ayer=""
-    nums_ayer=[]; 
+    nums_ayer=[];
     for rr in por_fecha.get(ayer,[]): nums_ayer.extend(rr.get("numeros",[]))
     conteo_ayer=Counter(nums_ayer)
+    # ── Anguilla intra-día: repetición dentro de los ~15 sorteos Anguilla ayer ─
+    nums_anguila_ayer=[]
+    for rr in por_fecha.get(ayer,[]):
+        if es_anguila_cualquiera(rr.get("loteria","")):
+            nums_anguila_ayer.extend(rr.get("numeros",[]))
+    conteo_anguila_ayer=Counter(nums_anguila_ayer)
+    # ── Mismo día cross-lottery (hoy — otros sorteos ya transcurridos) ─────────
+    nums_hoy=[]
+    for rr in por_fecha.get(fecha_actual,[]):
+        if not es_objetivo(rr.get("loteria","")):
+            nums_hoy.extend(rr.get("numeros",[]))
+    conteo_hoy=Counter(nums_hoy)
     ult7=prev[-7:]; ult15=prev[-15:]
     nums_ult7=[]; nums_ult15=[]
     for r in ult7: nums_ult7.extend(r.get("numeros",[]))
@@ -210,6 +228,14 @@ def calcular_score_candidatos(hist_lot,fecha_actual,por_fecha):
         score+=c7[n]*8.0+c15[n]*4.0+c7[inv]*3.0
         # ── Ayer global (acotado por cantidad de loterías del día) ────────────
         score+=conteo_ayer[n]*12.0+conteo_ayer[inv]*5.0
+        # ── Anguilla intra-día: repetición dentro de Anguilla ayer (~15 sorteos) ──
+        ca=conteo_anguila_ayer[n]
+        if ca>=3: score+=32.0          # super caliente en Anguilla ayer
+        elif ca==2: score+=20.0        # repetido 2 veces en Anguilla ayer
+        elif ca==1: score+=9.0         # apareció 1 vez en Anguilla ayer
+        score+=conteo_anguila_ayer[inv]*4.5
+        # ── Mismo día cross-lottery (otras loterías de hoy ya transcurridas) ─────
+        score+=conteo_hoy[n]*15.0+conteo_hoy[inv]*6.0
         # ── Atraso (bonus/penalidad fija) ─────────────────────────────────────
         atraso=(total_prev-1)-ultimo_idx[n] if n in ultimo_idx else total_prev+20
         if 5<=atraso<=28: score+=35.0
@@ -992,6 +1018,45 @@ def combo_anguila():
             "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
     except Exception as e: return jsonify({"error":str(e)})
 
+@app.route("/mismo_dia_anguila")
+def mismo_dia_anguila():
+    """Análisis de repetición intra-Anguilla (ayer) y cross-lottery (hoy)."""
+    try:
+        _,registros,_=leer_toda_biblia()
+        nombre_obj=nombre_objetivo_en_biblia(registros)
+        if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
+        _,por_fecha,_=preparar_indices(registros)
+        hoy=datetime.now().strftime("%Y-%m-%d")
+        ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
+        # ── Anguilla ayer: todos los ~15 sorteos ─────────────────────────────
+        draws_anguila_ayer=[rr for rr in por_fecha.get(ayer,[]) if es_anguila_cualquiera(rr.get("loteria",""))]
+        nums_ang_ayer=[]
+        for rr in draws_anguila_ayer: nums_ang_ayer.extend(rr.get("numeros",[]))
+        conteo_ang=Counter(nums_ang_ayer)
+        hot_ayer=[]
+        for n,cnt in sorted(conteo_ang.items(),key=lambda x:-x[1]):
+            if cnt<2: continue
+            apariciones=[rr.get("loteria","") for rr in draws_anguila_ayer if n in rr.get("numeros",[])]
+            hot_ayer.append({"numero":n,"count":cnt,"sorteos":apariciones[:6]})
+        # ── Hoy: otros sorteos no-Anguilla-10AM ya transcurridos ─────────────
+        draws_hoy_otros=[rr for rr in por_fecha.get(hoy,[]) if not es_objetivo(rr.get("loteria",""))]
+        nums_hoy=[]
+        for rr in draws_hoy_otros: nums_hoy.extend(rr.get("numeros",[]))
+        conteo_hoy=Counter(nums_hoy)
+        hot_hoy=[{"numero":n,"count":cnt} for n,cnt in sorted(conteo_hoy.items(),key=lambda x:-x[1]) if cnt>=2][:12]
+        # ── Tabla de todos los sorteos Anguilla ayer (resumen) ───────────────
+        resumen_ayer=[{"loteria":rr.get("loteria",""),"numeros":rr.get("numeros",[])} for rr in draws_anguila_ayer]
+        return jsonify({
+            "fecha":hoy,"ayer":ayer,
+            "hot_anguila_ayer":hot_ayer[:15],
+            "draws_anguila_ayer":len(draws_anguila_ayer),
+            "resumen_sorteos_ayer":resumen_ayer,
+            "hot_cross_hoy":hot_hoy,
+            "draws_hoy_otros":len(draws_hoy_otros),
+            "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    except Exception as e: return jsonify({"error":str(e)})
+
 @app.route("/heatmap_anguila")
 def heatmap_anguila():
     try:
@@ -1182,6 +1247,7 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
 <div style="display:flex;gap:8px;margin-bottom:12px;">
   <button class="btn-green" onclick="analizar()" style="flex:1;border-radius:9px;border:none;font-size:13px;font-weight:bold;padding:12px;">⚡ Solo V5</button>
   <button style="flex:1;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:bold;padding:12px;cursor:pointer;" onclick="analizarSucesor()">🔄 Solo Sucesor</button>
+  <button style="flex:1;background:linear-gradient(135deg,#c2410c,#ea580c);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:bold;padding:12px;cursor:pointer;" onclick="cargarMismoDia()">🔥 HOT DÍA</button>
 </div>
 <div id="msg-analizar" class="err hidden"></div>
 
@@ -1257,6 +1323,24 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div style="font-size:11px;color:#4a7fa0;margin-bottom:4px;">Color = frecuencia en 1ra posición. Toca para ver detalle.</div>
   <div id="heatmap-grid" class="heatmap-grid"></div>
   <div class="hm-tip" id="hm-tip"></div>
+</div>
+
+<!-- ANGUILLA MISMO DÍA HOT -->
+<div class="card hidden" id="card-mismo-dia">
+  <div class="card-title" style="color:#ff6b35;">🔥 ANGUILLA HOT — Mismo Día</div>
+  <div style="font-size:11px;color:#4a7fa0;margin-bottom:10px;" id="md-meta">—</div>
+  <div style="margin-bottom:12px;">
+    <div style="font-size:12px;color:#ff6b35;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">🔥 REPETIDOS EN ANGUILLA AYER:</div>
+    <div id="md-hot-ayer" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+  </div>
+  <div style="margin-bottom:10px;">
+    <div style="font-size:12px;color:#00d4ff;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">⚡ HOT EN OTRAS LOTERÍAS HOY:</div>
+    <div id="md-hot-hoy" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+  </div>
+  <div>
+    <div style="font-size:11px;color:#6a8fa0;margin-bottom:4px;">SORTEOS ANGUILLA AYER:</div>
+    <div id="md-resumen" style="display:flex;gap:4px;flex-wrap:wrap;max-height:120px;overflow-y:auto;padding:4px 0;"></div>
+  </div>
 </div>
 
 <!-- CONTROL -->
@@ -1383,6 +1467,12 @@ async function analizarCombo(){
     const rg=await fetch("/grafica_anguila");
     const dg=await rg.json();
     if(!dg.error){graficaData=dg; document.getElementById("card-grafica").classList.remove("hidden"); animarGrafica();}
+    // También cargar Anguilla HOT mismo día
+    try{
+      const rm=await fetch("/mismo_dia_anguila");
+      const dm=await rm.json();
+      if(!dm.error) pintarMismoDia(dm);
+    }catch(_){}
     msg.textContent="✅ COMBO listo · "+d.generado;
   }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
 }
@@ -1498,6 +1588,74 @@ function pintarSucesor(d){
     grid.appendChild(el);
   });
   grid.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+// ═══════════════════════════════════════════
+// ANGUILLA MISMO DÍA HOT
+// ═══════════════════════════════════════════
+async function cargarMismoDia(){
+  const msg=document.getElementById("msg-analizar");
+  msg.className="success-msg"; msg.textContent="⏳ Analizando Anguilla mismo día..."; msg.classList.remove("hidden");
+  try{
+    const r=await fetch("/mismo_dia_anguila");
+    const d=await r.json();
+    if(d.error){msg.className="err"; msg.textContent="❌ "+d.error; return;}
+    pintarMismoDia(d);
+    msg.textContent="✅ Anguilla HOT cargado · "+d.generado;
+  }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+function pintarMismoDia(d){
+  const card=document.getElementById("card-mismo-dia");
+  card.classList.remove("hidden");
+  document.getElementById("md-meta").textContent=
+    `📅 Ayer: ${d.ayer} · Anguilla: ${d.draws_anguila_ayer} sorteos · Otras loterías hoy: ${d.draws_hoy_otros} · ${d.generado}`;
+
+  // HOT ayer en Anguilla (repetidos 2+ veces)
+  const hotAyer=document.getElementById("md-hot-ayer");
+  hotAyer.innerHTML="";
+  if((d.hot_anguila_ayer||[]).length===0){
+    hotAyer.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin repeticiones en Anguilla ayer</div>';
+  } else {
+    (d.hot_anguila_ayer||[]).forEach(h=>{
+      const heat=h.count>=5?"#ff1144":h.count>=4?"#ff3300":h.count>=3?"#ff6600":h.count>=2?"#ffaa00":"#888";
+      const el=document.createElement("div");
+      el.style.cssText=`background:#120404;border:2px solid ${heat};border-radius:12px;padding:10px 14px;text-align:center;min-width:72px;box-shadow:0 0 8px ${heat}44;`;
+      const sortHoras=(h.sorteos||[]).slice(0,3).map(s=>s.replace(/Anguill?a\s*/i,"")).join(" · ");
+      el.innerHTML=`<div style="font-size:32px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;">${h.numero}</div>`+
+        `<div style="font-size:12px;color:${heat};font-weight:bold;margin-top:2px;">${h.count}× AYER</div>`+
+        `<div style="font-size:9px;color:#4a7fa0;margin-top:3px;">${sortHoras}</div>`;
+      hotAyer.appendChild(el);
+    });
+  }
+
+  // HOT cross-lottery hoy
+  const hotHoy=document.getElementById("md-hot-hoy");
+  hotHoy.innerHTML="";
+  if((d.hot_cross_hoy||[]).length===0){
+    hotHoy.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin datos cruzados de hoy aún</div>';
+  } else {
+    (d.hot_cross_hoy||[]).forEach(h=>{
+      const el=document.createElement("div");
+      el.style.cssText=`background:#001a22;border:2px solid #00d4ff55;border-radius:10px;padding:8px 12px;text-align:center;min-width:62px;`;
+      el.innerHTML=`<div style="font-size:24px;font-weight:bold;color:#e8f4ff;font-family:monospace;">${h.numero}</div>`+
+        `<div style="font-size:11px;color:#00d4ff;font-weight:bold;">${h.count}×</div>`;
+      hotHoy.appendChild(el);
+    });
+  }
+
+  // Resumen sorteos Anguilla ayer (lista compacta)
+  const resDiv=document.getElementById("md-resumen");
+  resDiv.innerHTML="";
+  (d.resumen_sorteos_ayer||[]).forEach(rr=>{
+    const el=document.createElement("div");
+    const hora=rr.loteria.replace(/Anguill?a\s*/i,"");
+    el.style.cssText="background:#0b1624;border:1px solid #1e3350;border-radius:6px;padding:4px 8px;font-size:10px;color:#b0cce0;white-space:nowrap;";
+    el.innerHTML=`<span style="color:#4a7fa0;">${hora}</span>: <b style="color:#e8f4ff;">${(rr.numeros||[]).join(" ")}</b>`;
+    resDiv.appendChild(el);
+  });
+
+  card.scrollIntoView({behavior:"smooth",block:"start"});
 }
 
 // ═══════════════════════════════════════════
