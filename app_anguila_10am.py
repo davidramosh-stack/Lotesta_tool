@@ -938,6 +938,58 @@ def sucesor_anguila():
             "tabla_decenas":tabla_decenas,"generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
     except Exception as e: return jsonify({"error":str(e)})
 
+@app.route("/combo_anguila",methods=["POST"])
+def combo_anguila():
+    try:
+        _,registros,_=leer_toda_biblia()
+        nombre_obj=nombre_objetivo_en_biblia(registros)
+        if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
+        if aprendizaje["corriendo"]: return jsonify({"error":"Aprendizaje corriendo"})
+        # ── Motor V5 ──────────────────────────────────────────────────────────
+        ia_data=ia_score_ganador_loteria(nombre_obj)
+        top100_v5=ia_data.get("top100_actual",[]) or []
+        max_prio=max((float(x.get("prioridad_v5",0) or 0) for x in top100_v5),default=1) or 1
+        v5_dict={x["numero"]:x for x in top100_v5}
+        top_v5_set={x["numero"] for x in ia_data.get("top_ia",[])[:20]}
+        # ── Motor Sucesor ─────────────────────────────────────────────────────
+        regs=[r for r in registros if r.get("loteria")==nombre_obj]
+        regs.sort(key=lambda x:x.get("fecha",""))
+        top_suc=predecir_sucesor(regs,ventana=8)
+        max_suc=max((float(x.get("score_suc",0) or 0) for x in top_suc),default=1) or 1
+        suc_dict={x["numero"]:x for x in top_suc}
+        top_suc_set={x["numero"] for x in top_suc[:20]}
+        # ── Fusión ────────────────────────────────────────────────────────────
+        nums=[str(i).zfill(2) for i in range(100)]
+        combo=[]
+        for n in nums:
+            v5=v5_dict.get(n,{}); suc=suc_dict.get(n,{})
+            prio=float(v5.get("prioridad_v5",0) or 0)
+            sc_suc=float(suc.get("score_suc",0) or 0)
+            v5_norm=(prio/max_prio)*100
+            suc_norm=sc_suc  # ya 0-100
+            in_both=n in top_v5_set and n in top_suc_set
+            bonus=22 if in_both else 0
+            combo_score=v5_norm*0.55+suc_norm*0.45+bonus
+            if combo_score<=0.5: continue
+            fuente="🎯COMBO" if in_both else ("V5" if n in top_v5_set else ("SUC" if n in top_suc_set else "BASE"))
+            combo.append({
+                "numero":n,"combo_score":round(combo_score,4),
+                "score_v5":round(v5_norm,2),"score_suc":round(suc_norm,2),
+                "fuente":fuente,"in_rango_v5":n in top_v5_set,"in_top_suc":n in top_suc_set,
+                "zona_ia":v5.get("zona_ia",""),"atraso":v5.get("atraso",9999),
+                "razones":v5.get("razones",[])[:4],
+                "freq_lag1":suc.get("freq_lag1",0),"pct_lag1":suc.get("pct_lag1",0),
+                "patron":suc.get("patron","")})
+        combo.sort(key=lambda x:x["combo_score"],reverse=True)
+        primeras=[r["numeros"][0] for r in regs if r.get("numeros")]
+        return jsonify({"loteria":nombre_obj,"top_combo":combo[:30],
+            "ultimo_numero":ia_data.get("ultimo_numero_ganador",""),
+            "ultimos_5":primeras[-5:] if primeras else [],
+            "tendencia":ia_data.get("tendencia_ia",""),"confianza":ia_data.get("confianza",0),
+            "metricas":ia_data.get("metricas",{}),"rango_ia":ia_data.get("rango_ia",{}),
+            "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    except Exception as e: return jsonify({"error":str(e)})
+
 @app.route("/heatmap_anguila")
 def heatmap_anguila():
     try:
@@ -1111,9 +1163,10 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
 </div>
 
 <!-- BOTONES ACCIÓN -->
+<button onclick="analizarCombo()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#d97706,#b45309);color:#fff;border:none;border-radius:10px;font-size:17px;font-weight:900;padding:17px;cursor:pointer;letter-spacing:.5px;margin-bottom:8px;box-shadow:0 0 18px #f59e0b44;">🎯 COMBO IA + SUCESOR</button>
 <div style="display:flex;gap:8px;margin-bottom:12px;">
-  <button class="btn-green" onclick="analizar()" style="flex:1;border-radius:9px;border:none;font-size:15px;font-weight:bold;padding:15px;">⚡ ANALIZAR + PREDECIR</button>
-  <button style="flex:1;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:bold;padding:15px;cursor:pointer;" onclick="analizarSucesor()">🔄 PATRÓN SUCESOR</button>
+  <button class="btn-green" onclick="analizar()" style="flex:1;border-radius:9px;border:none;font-size:13px;font-weight:bold;padding:12px;">⚡ Solo V5</button>
+  <button style="flex:1;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:bold;padding:12px;cursor:pointer;" onclick="analizarSucesor()">🔄 Solo Sucesor</button>
 </div>
 <div id="msg-analizar" class="err hidden"></div>
 
@@ -1155,6 +1208,14 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div class="card-title">🏆 Top Predicciones IA</div>
   <div style="font-size:11px;color:#4a7fa0;margin-bottom:6px;" id="pred-meta">—</div>
   <div id="pred-grid" class="pred-grid"></div>
+</div>
+
+<!-- COMBO -->
+<div class="card hidden" id="card-combo">
+  <div class="card-title" style="color:#f59e0b;">🎯 COMBO IA + SUCESOR</div>
+  <div style="font-size:11px;color:#4a7fa0;margin-bottom:6px;" id="combo-meta">—</div>
+  <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;" id="combo-badges"></div>
+  <div id="combo-grid" class="pred-grid"></div>
 </div>
 
 <!-- SUCESOR PATRÓN -->
@@ -1288,6 +1349,72 @@ async function analizar(){
     if(!dh.error){pintarHeatmap(dh);}
 
   } catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+// ═══════════════════════════════════════════
+// COMBO IA + SUCESOR
+// ═══════════════════════════════════════════
+async function analizarCombo(){
+  const msg=document.getElementById("msg-analizar");
+  msg.className="success-msg"; msg.textContent="⏳ Fusionando V5 + Sucesor..."; msg.classList.remove("hidden");
+  try{
+    const r=await fetch("/combo_anguila",{method:"POST",headers:{"Content-Type":"application/json"}});
+    const d=await r.json();
+    if(d.error){msg.className="err"; msg.textContent="❌ "+d.error; return;}
+    pintarCombo(d);
+    // También mostrar gráfica si no está visible
+    const rg=await fetch("/grafica_anguila");
+    const dg=await rg.json();
+    if(!dg.error){graficaData=dg; document.getElementById("card-grafica").classList.remove("hidden"); animarGrafica();}
+    msg.textContent="✅ COMBO listo · "+d.generado;
+  }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+function pintarCombo(d){
+  const card=document.getElementById("card-combo");
+  card.classList.remove("hidden");
+  const m=d.metricas||{};
+  document.getElementById("combo-meta").textContent=
+    `${m.puntos_memoria||"?"} memoria · Confianza: ${d.confianza||"?"}% · Último: ${d.ultimo_numero||"?"} · tend:${d.tendencia||""}`;
+  // Badges últimos 5
+  const bRow=document.getElementById("combo-badges");
+  bRow.innerHTML="";
+  (d.ultimos_5||[]).forEach((n,i)=>{
+    const sp=document.createElement("span");
+    sp.className="badge";
+    sp.style.cssText=i===d.ultimos_5.length-1?"background:#f59e0b22;border-color:#f59e0b;color:#f59e0b;":"";
+    sp.textContent=n;
+    bRow.appendChild(sp);
+  });
+  const grid=document.getElementById("combo-grid");
+  grid.innerHTML="";
+  (d.top_combo||[]).slice(0,20).forEach((c,i)=>{
+    const isCombo=c.fuente==="🎯COMBO";
+    const rankColor=i===0?"#ffd700":i<3?"#f59e0b":isCombo?"#00d4ff":i<10?"#00e090":"#4a7fa0";
+    const borderStyle=isCombo?"2px solid #f59e0b":"1.5px solid "+rankColor+"55";
+    const el=document.createElement("div");
+    el.style.cssText=`background:#060b14;border:${borderStyle};border-radius:10px;padding:10px 6px;text-align:center;position:relative;${isCombo?"box-shadow:0 0 10px #f59e0b44;":""}`;
+    const barV=Math.round(c.score_v5);
+    const barS=Math.round(c.score_suc);
+    // Doble barra de progreso V5 vs SUC
+    el.innerHTML=`
+      ${isCombo?'<div style="position:absolute;top:-1px;left:0;right:0;height:2px;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-radius:10px 10px 0 0;"></div>':''}
+      <div style="font-size:9px;color:${rankColor};margin-bottom:1px;">#${i+1} ${c.fuente}</div>
+      <div style="font-size:28px;font-weight:bold;color:#e8f4ff;font-family:monospace;line-height:1.1;">${c.numero}</div>
+      <div style="font-size:9px;color:#f59e0b;margin:2px 0;">${c.combo_score.toFixed(1)}pts</div>
+      <div style="display:flex;gap:2px;margin:3px 0;height:4px;border-radius:3px;overflow:hidden;">
+        <div style="flex:${barV};background:#00d4ff;opacity:.8;"></div>
+        <div style="flex:${barS};background:#f59e0b;opacity:.8;"></div>
+      </div>
+      <div style="display:flex;justify-content:center;gap:4px;font-size:8px;color:#4a7fa0;">
+        <span style="color:#00d4ff;">V5:${c.score_v5.toFixed(0)}</span>
+        <span style="color:#f59e0b;">SUC:${c.score_suc.toFixed(0)}</span>
+      </div>
+      ${c.pct_lag1>0?`<div style="font-size:8px;color:#2a4a60;margin-top:2px;">L1:${c.pct_lag1}%</div>`:""}
+    `;
+    grid.appendChild(el);
+  });
+  card.scrollIntoView({behavior:"smooth",block:"start"});
 }
 
 // ═══════════════════════════════════════════
