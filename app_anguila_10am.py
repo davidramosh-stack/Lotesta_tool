@@ -1100,7 +1100,7 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
 .btn-toggle{background:#0d1e32;color:#6ab0d0;border:1px solid #1e3350;border-radius:7px;padding:7px 11px;font-size:12px;cursor:pointer;transition:all .2s;}
 .btn-toggle.active{background:#1e3350;color:#00d4ff;border-color:#00d4ff;}
 .y-axis{position:absolute;left:0;top:0;width:48px;height:280px;background:#07101b;border-right:1px solid #1e3350;z-index:2;pointer-events:none;}
-.chart-scroll{overflow-x:auto;overflow-y:hidden;width:100%;height:280px;padding-left:48px;}
+.chart-scroll{overflow-x:auto;overflow-y:hidden;width:100%;height:320px;padding-left:48px;}
 .chart-canvas{display:block;height:280px;}
 .grafica-tip{background:#0b1624;border:1px solid #1e3350;border-radius:8px;padding:10px;font-family:monospace;font-size:12px;margin-top:8px;white-space:pre-wrap;color:#b0cce0;min-height:44px;}
 .grafica-info{font-size:11px;color:#2a4a60;margin-bottom:6px;}
@@ -1192,8 +1192,10 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
     <button class="btn-toggle active" id="tog-ma15" onclick="toggleMA('ma15')">MA15</button>
     <button class="btn-toggle active" id="tog-ma30" onclick="toggleMA('ma30')">MA30</button>
     <button class="btn-toggle active" id="tog-nums" onclick="toggleMA('nums')">Nums</button>
+    <button class="btn-sm btn-main" onclick="cambiarEsp(-5)" style="font-size:14px;font-weight:bold;">−−</button>
     <button class="btn-sm btn-main" onclick="cambiarEsp(-2)">−</button>
     <button class="btn-sm btn-main" onclick="cambiarEsp(2)">+</button>
+    <button class="btn-sm btn-main" onclick="cambiarEsp(5)" style="font-size:14px;font-weight:bold;">++</button>
   </div>
   <div class="grafica-info" id="grafica-info">—</div>
   <div class="grafica-wrap" id="grafica-wrap" style="position:relative;">
@@ -1559,7 +1561,7 @@ function toggleMA(key){
   if(graficaData) dibujarGrafica(1.0);
 }
 
-function cambiarEsp(d){ espacioPuntos=Math.max(3,Math.min(30,espacioPuntos+d)); if(graficaData) dibujarGrafica(1.0); }
+function cambiarEsp(d){ espacioPuntos=Math.max(2,Math.min(120,espacioPuntos+d)); if(graficaData) dibujarGrafica(1.0); }
 
 function animarGrafica(){
   if(animFrame) cancelAnimationFrame(animFrame);
@@ -1571,6 +1573,29 @@ function animarGrafica(){
   }
   animFrame=requestAnimationFrame(frame);
 }
+
+// ── Pinch-to-zoom en el chart ─────────────────────────────────────────────
+(function(){
+  let pinchDist0=0, esp0=0;
+  const scroll=document.getElementById("chart-scroll");
+  scroll.addEventListener("touchstart",function(e){
+    if(e.touches.length===2){
+      pinchDist0=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                            e.touches[0].clientY-e.touches[1].clientY);
+      esp0=espacioPuntos;
+    }
+  },{passive:true});
+  scroll.addEventListener("touchmove",function(e){
+    if(e.touches.length===2){
+      e.preventDefault();
+      const dist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                            e.touches[0].clientY-e.touches[1].clientY);
+      const ratio=dist/(pinchDist0||1);
+      espacioPuntos=Math.max(2,Math.min(120,Math.round(esp0*ratio)));
+      if(graficaData) dibujarGrafica(1.0);
+    }
+  },{passive:false});
+})();
 
 function calcMA(valores,ventana){
   return valores.map((_,i)=>{
