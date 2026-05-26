@@ -528,14 +528,16 @@ def predecir_sucesor(hist_lot_sorted,ventana=8):
     pesos_lag={1:1.0, 2:0.50, 3:0.25, 4:0.15, 5:0.10}
 
     for pos_back,num in enumerate(reversed(ultimos)):
-        lag_aplicado=pos_back+1  # este número está a lag_aplicado sorteos del próximo
+        lag_aplicado=pos_back+1
         if lag_aplicado>5: break
-        peso_recencia=1.0/(2**pos_back)  # 1, 0.5, 0.25 ...
-
-        for lag_hist,[lag_key,w_lag] in enumerate([[lag_aplicado,pesos_lag.get(lag_aplicado,0.05)]]):
-            total_t=sum(trans[lag_key][num].values()) or 1
-            for suc,freq in trans[lag_key][num].items():
-                scores[suc]+=( freq/total_t)*w_lag*peso_recencia*100
+        if lag_aplicado not in trans: continue  # defensa extra
+        peso_recencia=1.0/(2**pos_back)
+        w_lag=pesos_lag.get(lag_aplicado,0.05)
+        try:
+            total_t=sum(trans[lag_aplicado][num].values()) or 1
+            for suc,freq in trans[lag_aplicado][num].items():
+                scores[suc]+=(freq/total_t)*w_lag*peso_recencia*100
+        except Exception: pass
 
         # Patrón de decena (solo lag-1 del número más reciente)
         if pos_back==0:
