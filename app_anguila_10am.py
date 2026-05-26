@@ -1064,6 +1064,7 @@ def espejos_anguila():
     2. Los que salieron ayer en Anguilla (1ra+2da+3ra) → candidatos de hoy
     3. Rankeados por su score histórico × veces que salieron ayer
     4. Marca cuáles ya se confirmaron hoy en 1ra de algún sorteo Anguilla
+    5. Por cada número: a qué hora tiende a repetir al día siguiente
     """
     try:
         _,registros,_=leer_toda_biblia()
@@ -1071,17 +1072,14 @@ def espejos_anguila():
         if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
         _,por_fecha,_=preparar_indices(registros)
         # ── Score histórico de los 100 números ───────────────────────────────
-        # Usa TODOS los sorteos Anguilla que haya en la Biblia (aunque sea 2026)
         regs_ang=[r for r in registros if es_anguila_cualquiera(r.get("loteria",""))]
         regs_ang.sort(key=lambda x:x.get("fecha",""))
         T=max(len(regs_ang),1)
         f1=Counter(); f2=Counter(); f3=Counter()
-        # Recencia: bonus extra por apariciones en los últimos 45 sorteos
-        rec45=[r for r in regs_ang[-45:]] if len(regs_ang)>=45 else regs_ang
+        rec45=regs_ang[-45:] if len(regs_ang)>=45 else regs_ang
         f_rec=Counter()
         for rr in regs_ang:
-            nums=(rr.get("numeros") or [])[:3]
-            for pos,n in enumerate(nums):
+            for pos,n in enumerate((rr.get("numeros") or [])[:3]):
                 if not n: continue
                 if pos==0: f1[n]+=1
                 elif pos==1: f2[n]+=1
@@ -1089,27 +1087,55 @@ def espejos_anguila():
         for rr in rec45:
             for n in (rr.get("numeros") or [])[:3]:
                 if n: f_rec[n]+=1
+        # ── Horario de repetición: D→D+1 (a qué hora confirma cada número) ──
+        # hora_rep[n] = Counter de horas donde n apareció en 1ra de Anguilla
+        #               el día siguiente a haber salido en cualquier posición
+        hora_rep=defaultdict(Counter)
+        fechas_ang=sorted(set(r.get("fecha","") for r in regs_ang if r.get("fecha")))
+        for i in range(len(fechas_ang)-1):
+            fd=fechas_ang[i]; fd1=fechas_ang[i+1]
+            try:
+                if (datetime.strptime(fd1,"%Y-%m-%d")-datetime.strptime(fd,"%Y-%m-%d")).days!=1: continue
+            except: continue
+            # Todos los números del día D
+            nums_d=set()
+            for rr in por_fecha.get(fd,[]):
+                if es_anguila_cualquiera(rr.get("loteria","")):
+                    for n in (rr.get("numeros") or [])[:3]:
+                        if n: nums_d.add(n)
+            if not nums_d: continue
+            # Registrar en qué hora confirman en 1ra el día D+1
+            for rr in por_fecha.get(fd1,[]):
+                if not es_anguila_cualquiera(rr.get("loteria","")): continue
+                nn=rr.get("numeros",[])
+                if not nn: continue
+                n=nn[0]
+                if n in nums_d:
+                    hora=rr.get("loteria","").replace("Anguilla ","").replace("Anguila ","").strip()
+                    hora_rep[n][hora]+=1
         nums100=[str(i).zfill(2) for i in range(100)]
         scores={}
         for n in nums100:
-            # Ponderado: 1ra vale 3×, 2da vale 2×, 3ra vale 1×, normalizado por total
-            s=(f1[n]/T)*300 + (f2[n]/T)*150 + (f3[n]/T)*80
-            s+=f_rec[n]*6   # bonus recencia últimos 45
+            s=(f1[n]/T)*300+(f2[n]/T)*150+(f3[n]/T)*80+f_rec[n]*6
             scores[n]=round(s,4)
         max_score=max(scores.values()) or 1
-        # Tabla de todos los 100 números ordenada por score
+        # Tabla de todos los 100 con score + horario de repetición
         tabla_100=[]
         for n in nums100:
             sc=scores[n]; tot=f1[n]+f2[n]+f3[n]
+            horas=sorted(hora_rep[n].items(),key=lambda x:-x[1])
+            horas_top=[{"hora":h,"veces":v} for h,v in horas[:5]]
             tabla_100.append({"numero":n,"score":sc,"score_pct":round(sc/max_score*100,1),
-                               "f1":f1[n],"f2":f2[n],"f3":f3[n],"total":tot,"rec45":f_rec[n]})
+                               "f1":f1[n],"f2":f2[n],"f3":f3[n],"total":tot,"rec45":f_rec[n],
+                               "horas_rep":horas_top})
         tabla_100.sort(key=lambda x:-x["score"])
         for i,item in enumerate(tabla_100): item["rank"]=i+1
         rank_map={x["numero"]:x["rank"] for x in tabla_100}
+        hora_rep_map={x["numero"]:x["horas_rep"] for x in tabla_100}
         # ── Ayer: todos los sorteos Anguilla ─────────────────────────────────
         hoy=datetime.now().strftime("%Y-%m-%d")
         ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
-        nums_ayer={}  # n -> {"1ra":["10AM","12PM",...], "2da":[...], "3ra":[...]}
+        nums_ayer={}
         for rr in por_fecha.get(ayer,[]):
             if not es_anguila_cualquiera(rr.get("loteria","")): continue
             hora=rr.get("loteria","").replace("Anguilla ","").replace("Anguila ","")
@@ -1119,7 +1145,7 @@ def espejos_anguila():
                 if n not in nums_ayer: nums_ayer[n]={"1ra":[],"2da":[],"3ra":[]}
                 nums_ayer[n][lbl].append(hora)
         # ── Hoy: cuáles ya se confirmaron en 1ra de Anguilla ─────────────────
-        confirmados={}  # n -> [sorteos donde ya salió hoy en 1ra]
+        confirmados={}
         for rr in por_fecha.get(hoy,[]):
             if not es_anguila_cualquiera(rr.get("loteria","")): continue
             nn=rr.get("numeros",[])
@@ -1144,7 +1170,8 @@ def espejos_anguila():
                 "posiciones_ayer":posiciones,"total_ayer":tot_ayer,
                 "f1":f1[n],"f2":f2[n],"f3":f3[n],"rec45":f_rec[n],
                 "confirmado_hoy":n in confirmados,
-                "confirmado_sorteos":confirmados.get(n,[])
+                "confirmado_sorteos":confirmados.get(n,[]),
+                "horas_rep":hora_rep_map.get(n,[])   # a qué hora tiende a repetir
             })
         # Confirmados primero → luego por score_cand desc
         candidatos_hoy.sort(key=lambda x:(-int(x["confirmado_hoy"]),-x["score_cand"]))
@@ -1754,7 +1781,14 @@ function pintarEspejos(d){
         return `<span style="background:#0a1525;border:1px solid ${col}55;border-radius:4px;padding:1px 5px;font-size:9px;color:${col};">${p.pos}×${p.veces}</span>`;
       }).join(" ");
       const confLabel=conf
-        ?`<div style="font-size:10px;color:#00ff88;font-weight:bold;margin-top:3px;">✅ ${(c.confirmado_sorteos||[]).join(", ")}</div>`:"";
+        ?`<div style="font-size:10px;color:#00ff88;font-weight:bold;margin-top:3px;">✅ ${(c.confirmado_sorteos||[]).join(" · ")}</div>`:"";
+      // Horas donde tiende a repetir históricamente
+      const horasHtml=(c.horas_rep||[]).slice(0,4).map((h,hi)=>{
+        const hcol=hi===0?"#f59e0b":hi===1?"#00d4ff":hi===2?"#c084fc":"#4a7fa0";
+        return `<div style="background:#080f1a;border:1px solid ${hcol}55;border-radius:5px;padding:2px 5px;font-size:9px;color:${hcol};white-space:nowrap;">${h.hora}<span style="color:#4a7fa0;"> ${h.veces}×</span></div>`;
+      }).join("");
+      const horasBloque=horasHtml
+        ?`<div style="margin-top:5px;"><div style="font-size:8px;color:#4a7fa0;margin-bottom:2px;">⏰ repite en:</div><div style="display:flex;flex-wrap:wrap;gap:2px;justify-content:center;">${horasHtml}</div></div>`:"";
       const el=document.createElement("div");
       el.style.cssText=`background:#04080f;border:${borde};border-radius:12px;padding:10px 10px;text-align:center;min-width:76px;${glow}`;
       el.innerHTML=
@@ -1764,7 +1798,7 @@ function pintarEspejos(d){
         `<div style="font-size:10px;color:${calor};font-weight:bold;">${pctH.toFixed(0)}% fza</div>`+
         `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin:3px 0;">${posHtml}</div>`+
         `<div style="font-size:9px;color:#4a7fa0;">${c.f1||0}×1 ${c.f2||0}×2 ${c.f3||0}×3</div>`+
-        confLabel;
+        horasBloque+confLabel;
       candDiv.appendChild(el);
     });
   }
