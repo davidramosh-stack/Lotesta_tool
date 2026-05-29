@@ -93,39 +93,66 @@ def racha_actual(seq):
     return val, count
 
 
+UMBRAL_MINIMO = 15.0  # tasa mínima para considerar que el método aplica
+
+
+def calcular_fila(lot, s, tipo):
+    seq = s[tipo]
+    if len(seq) < 20:
+        return None
+
+    total = len(seq)
+    tasa = round((sum(seq) / total) * 100, 1)
+    ultimos = seq[-30:]
+    tasa_reciente = round((sum(ultimos) / len(ultimos)) * 100, 1)
+    val, largo = racha_actual(seq)
+
+    return {
+        "loteria": lot,
+        "tasa": tasa,
+        "tasa_reciente": tasa_reciente,
+        "estado": val,
+        "racha": largo,
+        "ultimo_n": str(s["ultimo_n"]).zfill(2),
+        "inv_n": str(inverso(s["ultimo_n"])).zfill(2),
+        "ultima_fecha": s["ultima_fecha"],
+    }
+
+
 def calcular_ranking(stats, tipo):
     resultados = []
 
     for lot, s in stats.items():
-        seq = s[tipo]
-        if len(seq) < 20:
-            continue
+        fila = calcular_fila(lot, s, tipo)
+        if fila and fila["tasa"] >= UMBRAL_MINIMO:
+            resultados.append(fila)
 
-        total = len(seq)
-        emitidos = sum(seq)
-        tasa = round((emitidos / total) * 100, 1)
-
-        ultimos = seq[-30:]
-        tasa_reciente = round((sum(ultimos) / len(ultimos)) * 100, 1)
-
-        val, largo = racha_actual(seq)
-        ultimo_n = str(s["ultimo_n"]).zfill(2)
-        inv_n = str(inverso(s["ultimo_n"])).zfill(2)
-
-        resultados.append({
-            "loteria": lot,
-            "tasa": tasa,
-            "tasa_reciente": tasa_reciente,
-            "estado": val,
-            "racha": largo,
-            "ultimo_n": ultimo_n,
-            "inv_n": inv_n,
-            "ultima_fecha": s["ultima_fecha"],
-        })
-
-    # Ordenar: primero las que están emitiendo ahora, luego por tasa reciente
     resultados.sort(key=lambda x: (x["estado"], x["tasa_reciente"]), reverse=True)
     return resultados
+
+
+def calcular_descartadas(stats):
+    descartadas = []
+
+    for lot, s in stats.items():
+        fd = calcular_fila(lot, s, "directo")
+        fi = calcular_fila(lot, s, "inverso")
+
+        if fd is None or fi is None:
+            continue
+
+        td = fd["tasa"]
+        ti = fi["tasa"]
+
+        if td < UMBRAL_MINIMO and ti < UMBRAL_MINIMO:
+            descartadas.append({
+                "loteria": lot,
+                "tasa_directo": td,
+                "tasa_inverso": ti,
+            })
+
+    descartadas.sort(key=lambda x: x["tasa_directo"] + x["tasa_inverso"])
+    return descartadas
 
 
 def mostrar(ranking, tipo, ultima_fecha):
@@ -153,11 +180,13 @@ def ejecutar():
 
         rank_directo = calcular_ranking(stats, "directo")
         rank_inverso = calcular_ranking(stats, "inverso")
+        total_activas = len(set([r["loteria"] for r in rank_directo] + [r["loteria"] for r in rank_inverso]))
 
         print("\n" + "=" * 50)
         print("  EMISORAS 1RA - DIRECTO + INVERSO")
         print("=" * 50)
         print(f"  Loterías analizadas : {len(stats)}")
+        print(f"  Con método activo   : {total_activas}")
         print(f"  Fechas en DB        : {len(fechas)}")
         print(f"  Última fecha        : {ultima_fecha}")
 
@@ -166,9 +195,20 @@ def ejecutar():
 
         print("\nNÚMEROS A VIGILAR:")
         directos = " ".join(r["ultimo_n"] for r in rank_directo[:5])
-        inversos = " ".join(f"{r['inv_n']}" for r in rank_inverso[:5])
+        inversos = " ".join(r["inv_n"] for r in rank_inverso[:5])
         print(f"  Directos : {directos}")
         print(f"  Inversos : {inversos}")
+
+        descartadas = calcular_descartadas(stats)
+        if descartadas:
+            print(f"\n{'='*50}")
+            print(f"  LOTERÍAS SIN MÉTODO (directo + inverso < {UMBRAL_MINIMO}%)")
+            print(f"{'='*50}")
+            print(f"{'Lotería':<28} {'Directo%':<12} {'Inverso%'}")
+            print("-" * 50)
+            for r in descartadas:
+                print(f"  {r['loteria']:<26} {r['tasa_directo']:<12} {r['tasa_inverso']}")
+
         print()
 
     finally:
