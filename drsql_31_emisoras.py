@@ -93,9 +93,6 @@ def racha_actual(seq):
     return val, count
 
 
-UMBRAL_MINIMO = 15.0  # tasa mínima para considerar que el método aplica
-
-
 def calcular_fila(lot, s, tipo):
     seq = s[tipo]
     if len(seq) < 20:
@@ -124,15 +121,16 @@ def calcular_ranking(stats, tipo):
 
     for lot, s in stats.items():
         fila = calcular_fila(lot, s, tipo)
-        if fila and fila["tasa"] >= UMBRAL_MINIMO:
+        if fila:
             resultados.append(fila)
 
     resultados.sort(key=lambda x: (x["estado"], x["tasa_reciente"]), reverse=True)
     return resultados
 
 
-def calcular_descartadas(stats):
-    descartadas = []
+def calcular_debiles(stats):
+    """Las 5 loterías con menor tasa combinada directo+inverso."""
+    todas = []
 
     for lot, s in stats.items():
         fd = calcular_fila(lot, s, "directo")
@@ -141,18 +139,16 @@ def calcular_descartadas(stats):
         if fd is None or fi is None:
             continue
 
-        td = fd["tasa"]
-        ti = fi["tasa"]
+        combinada = round((fd["tasa"] + fi["tasa"]) / 2, 1)
+        todas.append({
+            "loteria": lot,
+            "tasa_directo": fd["tasa"],
+            "tasa_inverso": fi["tasa"],
+            "combinada": combinada,
+        })
 
-        if td < UMBRAL_MINIMO and ti < UMBRAL_MINIMO:
-            descartadas.append({
-                "loteria": lot,
-                "tasa_directo": td,
-                "tasa_inverso": ti,
-            })
-
-    descartadas.sort(key=lambda x: x["tasa_directo"] + x["tasa_inverso"])
-    return descartadas
+    todas.sort(key=lambda x: x["combinada"])
+    return todas[:5]
 
 
 def mostrar(ranking, tipo, ultima_fecha):
@@ -199,15 +195,14 @@ def ejecutar():
         print(f"  Directos : {directos}")
         print(f"  Inversos : {inversos}")
 
-        descartadas = calcular_descartadas(stats)
-        if descartadas:
-            print(f"\n{'='*50}")
-            print(f"  LOTERÍAS SIN MÉTODO (directo + inverso < {UMBRAL_MINIMO}%)")
-            print(f"{'='*50}")
-            print(f"{'Lotería':<28} {'Directo%':<12} {'Inverso%'}")
-            print("-" * 50)
-            for r in descartadas:
-                print(f"  {r['loteria']:<26} {r['tasa_directo']:<12} {r['tasa_inverso']}")
+        debiles = calcular_debiles(stats)
+        print(f"\n{'='*50}")
+        print(f"  LOTERÍAS MÁS DÉBILES (método menos confiable)")
+        print(f"{'='*50}")
+        print(f"  {'Lotería':<26} {'Dir%':<8} {'Inv%':<8} {'Prom%'}")
+        print("-" * 50)
+        for r in debiles:
+            print(f"  {r['loteria']:<26} {r['tasa_directo']:<8} {r['tasa_inverso']:<8} {r['combinada']}")
 
         print()
 
