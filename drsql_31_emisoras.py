@@ -43,12 +43,21 @@ def crear_tablas(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS historial_predicciones (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha_objetivo  TEXT NOT NULL,
+            fecha_objetivo  TEXT,
             numero          INTEGER NOT NULL,
-            tipo            TEXT NOT NULL,
+            tipo            TEXT DEFAULT 'directo',
             acierto         INTEGER DEFAULT NULL
         )
     """)
+    # Migración: agrega columnas nuevas si la tabla ya existía con schema viejo
+    for col, definition in [
+        ("fecha_objetivo", "TEXT"),
+        ("tipo", "TEXT DEFAULT 'directo'"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE historial_predicciones ADD COLUMN {col} {definition}")
+        except sqlite3.OperationalError:
+            pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS ranking_numeros_reales (
             numero          INTEGER PRIMARY KEY,
