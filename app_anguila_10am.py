@@ -28,6 +28,12 @@ def es_objetivo(nombre):
         if a in n: return True
     return False
 
+def es_anguila_cualquiera(nombre):
+    """Detecta CUALQUIER sorteo Anguilla (los ~15 sorteos por día), no solo 10AM."""
+    n=(nombre or "").lower().strip()
+    n=n.replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
+    return "anguill" in n or "anguil" in n
+
 def nombre_objetivo_en_biblia(registros):
     for r in registros:
         if es_objetivo(r.get("loteria","")):
@@ -192,29 +198,57 @@ def calcular_score_candidatos(hist_lot,fecha_actual,por_fecha):
         d_actual=datetime.strptime(fecha_actual,"%Y-%m-%d")
         ayer=(d_actual-timedelta(days=1)).strftime("%Y-%m-%d")
     except: ayer=""
-    nums_ayer=[]; 
+    nums_ayer=[];
     for rr in por_fecha.get(ayer,[]): nums_ayer.extend(rr.get("numeros",[]))
     conteo_ayer=Counter(nums_ayer)
+    # ── Anguilla intra-día: repetición dentro de los ~15 sorteos Anguilla ayer ─
+    nums_anguila_ayer=[]
+    for rr in por_fecha.get(ayer,[]):
+        if es_anguila_cualquiera(rr.get("loteria","")):
+            nums_anguila_ayer.extend(rr.get("numeros",[]))
+    conteo_anguila_ayer=Counter(nums_anguila_ayer)
+    # ── Mismo día cross-lottery (hoy — otros sorteos ya transcurridos) ─────────
+    nums_hoy=[]
+    for rr in por_fecha.get(fecha_actual,[]):
+        if not es_objetivo(rr.get("loteria","")):
+            nums_hoy.extend(rr.get("numeros",[]))
+    conteo_hoy=Counter(nums_hoy)
     ult7=prev[-7:]; ult15=prev[-15:]
     nums_ult7=[]; nums_ult15=[]
     for r in ult7: nums_ult7.extend(r.get("numeros",[]))
     for r in ult15: nums_ult15.extend(r.get("numeros",[]))
     c7=Counter(nums_ult7); c15=Counter(nums_ult15)
+    T=max(total_prev,1)  # normalizador — escala fija sin importar cuántos datos
     for n in nums:
         score=0.0; inv=inverso(n)
-        score+=c1[n]*10.0+c2[n]*4.0+c3[n]*2.5
-        score+=c1[inv]*3.5+c2[inv]*1.5+c3[inv]*1.0
+        # ── Frecuencia NORMALIZADA por total (escala siempre igual) ──────────
+        score+=(c1[n]/T)*1000.0+(c2[n]/T)*400.0+(c3[n]/T)*250.0
+        score+=(c1[inv]/T)*350.0+(c2[inv]/T)*150.0+(c3[inv]/T)*100.0
+        # ── Recencia (ventanas fijas 7/15 — no crece con el tiempo) ──────────
         score+=c7[n]*8.0+c15[n]*4.0+c7[inv]*3.0
+        # ── Ayer global (acotado por cantidad de loterías del día) ────────────
         score+=conteo_ayer[n]*12.0+conteo_ayer[inv]*5.0
+        # ── Anguilla intra-día: repetición dentro de Anguilla ayer (~15 sorteos) ──
+        ca=conteo_anguila_ayer[n]
+        if ca>=3: score+=32.0          # super caliente en Anguilla ayer
+        elif ca==2: score+=20.0        # repetido 2 veces en Anguilla ayer
+        elif ca==1: score+=9.0         # apareció 1 vez en Anguilla ayer
+        score+=conteo_anguila_ayer[inv]*4.5
+        # ── Mismo día cross-lottery (otras loterías de hoy ya transcurridas) ─────
+        score+=conteo_hoy[n]*15.0+conteo_hoy[inv]*6.0
+        # ── Atraso (bonus/penalidad fija) ─────────────────────────────────────
         atraso=(total_prev-1)-ultimo_idx[n] if n in ultimo_idx else total_prev+20
         if 5<=atraso<=28: score+=35.0
         elif 29<=atraso<=60: score+=18.0
         elif atraso<=2: score-=18.0
         elif atraso>160: score-=10.0
-        freq=c1[n]
-        if media_freq>0 and freq>media_freq*2.8 and atraso<=7: score-=25.0
+        # ── Quemado: más del doble de frecuencia esperada y muy reciente ──────
+        freq_rate=c1[n]/T
+        if freq_rate>0.028 and atraso<=7: score-=25.0  # 2.8× la freq esperada (1/100=0.01)
         candidatos[n]=round(score,4)
     return candidatos
+
+MIN_WARMUP = 50  # sorteos mínimos antes de que el score se estabiliza
 
 # ══════════════════════════════════════════════════════════
 # APRENDIZAJE
@@ -257,10 +291,16 @@ def analizar_loteria_total_pro(loteria,registros_loteria,por_fecha):
         atraso=i if ult is None else (i-1-ult); atraso_ganador.append(atraso)
         eventos.append({"fecha":fecha,"real_1ra":real,"score_real":round(score_real,4),"rank_real":rank_real,"hit_top5":hit5,"hit_top10":hit10,"top5":top5,"top10":top10,"atraso_real":atraso})
         score_por_fecha.append({"fecha":fecha,"score_ganador":round(score_real,4),"rank_ganador":rank_real or 100,"numero":real})
-    if scores_ganadores:
-        sc_sorted=sorted(scores_ganadores)
+    # ── Rango ganador: SOLO fase estable (post-calentamiento) ─────────────
+    # Los primeros MIN_WARMUP sorteos tienen score bajo/ruidoso porque no hay
+    # suficiente historia — incluirlos contamina el rango y lo hace inexacto.
+    scores_estables=scores_ganadores[MIN_WARMUP:] if len(scores_ganadores)>MIN_WARMUP else scores_ganadores
+    warmup_fecha=score_por_fecha[MIN_WARMUP]["fecha"] if len(score_por_fecha)>MIN_WARMUP else (score_por_fecha[0]["fecha"] if score_por_fecha else "")
+    base_rango=scores_estables if scores_estables else scores_ganadores
+    if base_rango:
+        sc_sorted=sorted(base_rango)
         q25=sc_sorted[int(len(sc_sorted)*0.25)]; q50=sc_sorted[int(len(sc_sorted)*0.50)]; q75=sc_sorted[int(len(sc_sorted)*0.75)]
-        score_min=min(scores_ganadores); score_max=max(scores_ganadores); score_prom=sum(scores_ganadores)/len(scores_ganadores)
+        score_min=min(base_rango); score_max=max(base_rango); score_prom=sum(base_rango)/len(base_rango)
     else: score_min=score_max=score_prom=q25=q50=q75=0
     atraso_prom=sum(atraso_ganador)/len(atraso_ganador) if atraso_ganador else 0
     resumen={"loteria":loteria,"eventos_historicos":len(registros_loteria),"eventos_evaluados":total_eval,
@@ -271,6 +311,7 @@ def analizar_loteria_total_pro(loteria,registros_loteria,por_fecha):
         "score_ganador":{"min":round(score_min,4),"max":round(score_max,4),"promedio":round(score_prom,4),
             "q25":round(q25,4),"q50":round(q50,4),"q75":round(q75,4),
             "rango_min":round(q25*0.85,4),"rango_max":round(q75*1.20,4)},
+        "warmup_n":MIN_WARMUP,"warmup_fecha":warmup_fecha,
         "atraso_ganador_promedio":round(atraso_prom,2),
         "numeros_ganadores_frecuencia":dict(frecuencia_ganadora.most_common()),
         "score_por_fecha":score_por_fecha,"eventos":eventos[-500:],
@@ -468,6 +509,107 @@ def intercalar_candidatos_v4(candidatos,rmin,rmax,proyeccion,maximo=35):
         if not avanzo: break
     return salida
 
+# ══════════════════════════════════════════════════════════
+# MOTOR SUCESOR — patrones de transición histórica
+# ══════════════════════════════════════════════════════════
+def construir_matrices_transicion(primeras):
+    """
+    Lee toda la secuencia histórica de 1ras y construye:
+    - trans[lag][n] = Counter de sucesores a ese lag
+    - trans_dec[dec_n] = Counter de decenas sucesoras (lag-1)
+    """
+    T=len(primeras)
+    trans={1:defaultdict(Counter),2:defaultdict(Counter),
+           3:defaultdict(Counter),4:defaultdict(Counter),5:defaultdict(Counter)}
+    trans_dec=defaultdict(Counter)
+    for i in range(T):
+        n=primeras[i]
+        dec=str(int(n)//10)
+        for lag in [1,2,3,4,5]:
+            if i+lag<T:
+                suc=primeras[i+lag]
+                trans[lag][n][suc]+=1
+        if i+1<T:
+            suc1=primeras[i+1]
+            trans_dec[dec][str(int(suc1)//10)]+=1
+    return trans,trans_dec
+
+def predecir_sucesor(hist_lot_sorted,ventana=8):
+    """
+    Dado el historial ordenado, analiza los últimos `ventana` ganadores
+    y predice sucesores basándose en frecuencias históricas.
+    Retorna lista ordenada de candidatos con detalles de patrón.
+    """
+    nums=[str(i).zfill(2) for i in range(100)]
+    primeras=[r["numeros"][0] for r in hist_lot_sorted if r.get("numeros")]
+    T=len(primeras)
+    if T<20: return []
+
+    trans,trans_dec=construir_matrices_transicion(primeras)
+    ultimos=primeras[-ventana:]
+    ultimo=ultimos[-1]
+    scores=Counter()
+
+    # Pesos por lag: cuanto más reciente el "disparador", mayor peso
+    pesos_lag={1:1.0, 2:0.50, 3:0.25, 4:0.15, 5:0.10}
+
+    for pos_back,num in enumerate(reversed(ultimos)):
+        lag_aplicado=pos_back+1
+        if lag_aplicado>5: break
+        if lag_aplicado not in trans: continue  # defensa extra
+        peso_recencia=1.0/(2**pos_back)
+        w_lag=pesos_lag.get(lag_aplicado,0.05)
+        try:
+            total_t=sum(trans[lag_aplicado][num].values()) or 1
+            for suc,freq in trans[lag_aplicado][num].items():
+                scores[suc]+=(freq/total_t)*w_lag*peso_recencia*100
+        except Exception: pass
+
+        # Patrón de decena (solo lag-1 del número más reciente)
+        if pos_back==0:
+            dec=str(int(num)//10)
+            total_dec=sum(trans_dec[dec].values()) or 1
+            for dec_suc,freq_dec in trans_dec[dec].items():
+                prob_dec=(freq_dec/total_dec)*0.40*100
+                for j in range(10):
+                    cand=str(int(dec_suc)*10+j).zfill(2)
+                    scores[cand]+=prob_dec/10
+
+    if not scores: return []
+    max_sc=max(scores.values()) or 1
+
+    resultado=[]
+    for n in nums:
+        sc=scores.get(n,0)
+        if sc<=0: continue
+        # Detalle lag-1 directo del último número
+        total_lag1=sum(trans[1][ultimo].values()) or 1
+        freq_lag1=trans[1][ultimo].get(n,0)
+        pct_lag1=round(freq_lag1/total_lag1*100,1)
+        # Detalle decena
+        dec_ult=str(int(ultimo)//10)
+        dec_cand=str(int(n)//10)
+        total_dec_ult=sum(trans_dec[dec_ult].values()) or 1
+        freq_dec=trans_dec[dec_ult].get(dec_cand,0)
+        pct_dec=round(freq_dec/total_dec_ult*100,1)
+        # Cuántos sorteos atrás fue la última vez que N siguió al patrón
+        contexto_str=[]
+        for lag in [1,2,3]:
+            f=trans[lag][ultimo].get(n,0)
+            if f: contexto_str.append(f"L{lag}:{f}x")
+        resultado.append({
+            "numero":n,
+            "score_suc":round((sc/max_sc)*100,2),
+            "score_raw":round(sc,4),
+            "freq_lag1":freq_lag1,
+            "pct_lag1":pct_lag1,
+            "pct_dec":pct_dec,
+            "decena":dec_cand,
+            "patron":"+".join(contexto_str) if contexto_str else "DEC"
+        })
+    resultado.sort(key=lambda x:x["score_suc"],reverse=True)
+    return resultado[:30]
+
 def estadisticas_1ra_v5(loteria,registros_biblia):
     regs=[r for r in (registros_biblia or []) if r.get("loteria")==loteria]
     regs.sort(key=lambda x:x.get("fecha",""))
@@ -516,7 +658,8 @@ def estadisticas_1ra_v5(loteria,registros_biblia):
                 if ns and str(ns[0]).zfill(2)[-2:]==n: last_idx=i; break
             st["atraso_1ra"]=(total_regs-1-last_idx) if last_idx is not None else 9999
         else: st["atraso_1ra"]=9999
-        score=0.0; score+=f1*2.20; score+=st["rec_1ra_15"]*22.0; score+=st["rec_1ra_30"]*12.0; score+=st["rec_1ra_60"]*5.0; score+=share*55.0
+        # f1 normalizado: (f1/total_regs)*220 → escala ~2.2 sin importar cuántos datos
+        score=0.0; score+=(f1/max(total_regs,1))*220.0; score+=st["rec_1ra_15"]*22.0; score+=st["rec_1ra_30"]*12.0; score+=st["rec_1ra_60"]*5.0; score+=share*55.0
         atraso=st["atraso_1ra"]
         if 5<=atraso<=32: score+=38.0
         elif 33<=atraso<=75: score+=24.0
@@ -729,6 +872,7 @@ def grafica_anguila():
         score_info=lot_mem.get("score_ganador",{}) or {}
         puntos=list(lot_mem.get("score_por_fecha",[]) or [])
         if not puntos: return jsonify({"error":"No hay score_por_fecha"})
+        regs_lot_biblia=[]; por_loteria_biblia=defaultdict(list); por_fecha_biblia=defaultdict(list)
         try:
             ultima_fecha_mem=max([str(p.get("fecha","")) for p in puntos if p.get("fecha")])
             por_loteria_biblia,por_fecha_biblia,_=preparar_indices(registros)
@@ -746,44 +890,371 @@ def grafica_anguila():
                     if num==real_new: rank_real_new=pos; break
                 puntos.append({"fecha":fecha_new,"score_ganador":round(score_real_new,4),"rank_ganador":rank_real_new,"numero":real_new,"pendiente_memoria":True})
         except: pass
-        valores=[]
+        # ── Agregar numero_int (0-99) a cada punto ────────────────────────────
         for p in puntos:
-            try: valores.append(float(p.get("score_ganador",0)))
-            except: pass
-        vmin=min(valores) if valores else 0; vmax=max(valores) if valores else 100
-        rango_min=float(score_info.get("rango_min",0) or 0); rango_max=float(score_info.get("rango_max",0) or 0)
-        promedio=float(score_info.get("promedio",0) or 0)
-        margen=max(10,(vmax-vmin)*0.15)
-        escala_min=max(0,min(vmin,rango_min)-margen); escala_max=max(vmax,rango_max)+margen
-        tendencia="ESTABLE"; proyeccion_score=valores[-1] if valores else 0; media_mov=0
-        if len(valores)>=2:
-            recientes_mov=valores[-18:] if len(valores)>=18 else valores
-            diffs=[abs(recientes_mov[i]-recientes_mov[i-1]) for i in range(1,len(recientes_mov))]
-            media_mov=sum(diffs)/len(diffs) if diffs else 0
-        if len(valores)>=8:
-            recientes=valores[-8:]; x_mean=(len(recientes)-1)/2; y_mean=sum(recientes)/len(recientes)
-            den=sum((i-x_mean)**2 for i in range(len(recientes))) or 1
-            slope=sum((i-x_mean)*(recientes[i]-y_mean) for i in range(len(recientes)))/den
-            proyeccion_score=recientes[-1]+(slope*4)
+            try: p["numero_int"]=int(str(p.get("numero","0") or "0").zfill(2)[-2:])
+            except: p["numero_int"]=0
+        # ── Umbrales de score (para colorear puntos: ¿la IA lo predijo?) ──────
+        score_rango_min=float(score_info.get("rango_min",0) or 0)
+        score_rango_max=float(score_info.get("rango_max",100) or 100)
+        # ── Zona reciente: IQR de los últimos 30 números ganadores ────────────
+        num_vals=[p["numero_int"] for p in puntos]
+        rec30=num_vals[-30:] if len(num_vals)>=30 else num_vals
+        if rec30:
+            rs=sorted(rec30)
+            nq25=rs[int(len(rs)*0.25)]; nq75=rs[int(len(rs)*0.75)]
+            num_zona_min=max(0,nq25-5); num_zona_max=min(99,nq75+5)
+        else: num_zona_min=25; num_zona_max=75
+        # ── Candidatos IA actuales (números cuyo score está en rango) ──────────
+        candidatos_ia_nums=[]
+        try:
+            if regs_lot_biblia:
+                ultimo_dia=max((r.get("fecha","") for r in regs_lot_biblia if r.get("fecha")),default="")
+                fecha_obj=(datetime.strptime(ultimo_dia,"%Y-%m-%d")+timedelta(days=1)).strftime("%Y-%m-%d")
+                scores_act=calcular_score_candidatos(regs_lot_biblia,fecha_obj,por_fecha_biblia)
+                candidatos_ia_nums=sorted(
+                    [int(n) for n,sc in scores_act.items() if score_rango_min<=sc<=score_rango_max],
+                    key=lambda x:-float(scores_act.get(str(x).zfill(2),0))
+                )[:20]
+        except: pass
+        # ── Tendencia del NÚMERO (no del score) ───────────────────────────────
+        tendencia="ESTABLE"; proyeccion_num=num_vals[-1] if num_vals else 50; media_mov_num=0
+        if len(num_vals)>=2:
+            rm=num_vals[-18:] if len(num_vals)>=18 else num_vals
+            diffs=[abs(rm[i]-rm[i-1]) for i in range(1,len(rm))]
+            media_mov_num=sum(diffs)/len(diffs) if diffs else 0
+        if len(num_vals)>=8:
+            rec=num_vals[-8:]; xm=(len(rec)-1)/2; ym=sum(rec)/len(rec)
+            den=sum((i-xm)**2 for i in range(len(rec))) or 1
+            slope=sum((i-xm)*(rec[i]-ym) for i in range(len(rec)))/den
+            proyeccion_num=int(max(0,min(99,rec[-1]+(slope*4))))
             if slope>2.5: tendencia="ASCENDENTE"
             elif slope<-2.5: tendencia="DESCENDENTE"
-        if valores:
-            ultimo_score=valores[-1]
-            if media_mov<=0: media_mov=max(5,abs(proyeccion_score-ultimo_score))
-            if tendencia=="ASCENDENTE": brecha_min=ultimo_score+media_mov; brecha_max=ultimo_score+(media_mov*2)
-            elif tendencia=="DESCENDENTE": brecha_min=ultimo_score-(media_mov*2); brecha_max=ultimo_score-media_mov
-            else: brecha_min=ultimo_score-(media_mov*0.5); brecha_max=ultimo_score+(media_mov*0.5)
-            if brecha_min>brecha_max: brecha_min,brecha_max=brecha_max,brecha_min
-            brecha_min=max(0,brecha_min); brecha_max=max(0,brecha_max)
-        else: brecha_min=0; brecha_max=0
-        extras=[proyeccion_score,brecha_min,brecha_max,promedio,rango_min,rango_max]
-        extras=[float(x) for x in extras if x is not None]
-        if extras: escala_min=min(escala_min,min(extras)); escala_max=max(escala_max,max(extras))
-        margen2=max(15,(escala_max-escala_min)*0.12); escala_min=max(0,escala_min-margen2); escala_max=escala_max+margen2
-        niveles=[]
-        if escala_max>escala_min:
-            for i in range(1,5): niveles.append(round(escala_min+((escala_max-escala_min)*i/4),2))
-        return jsonify({"loteria":nombre_obj,"puntos":puntos,"rango_min":rango_min,"rango_max":rango_max,"promedio":promedio,"escala_min":round(escala_min,2),"escala_max":round(escala_max,2),"niveles":niveles,"total":len(puntos),"tendencia":tendencia,"proyeccion_score":round(proyeccion_score,2),"media_mov":round(media_mov,2),"brecha_min":round(brecha_min,2),"brecha_max":round(brecha_max,2)})
+        warmup_n=int(lot_mem.get("warmup_n",MIN_WARMUP) or MIN_WARMUP)
+        warmup_fecha=str(lot_mem.get("warmup_fecha","") or "")
+        return jsonify({"loteria":nombre_obj,"puntos":puntos,"total":len(puntos),
+            "escala_min":-3,"escala_max":102,
+            "niveles":[0,10,20,30,40,50,60,70,80,90,99],
+            "num_zona_min":num_zona_min,"num_zona_max":num_zona_max,
+            "score_rango_min":round(score_rango_min,4),"score_rango_max":round(score_rango_max,4),
+            "candidatos_ia_nums":candidatos_ia_nums,
+            "tendencia":tendencia,"proyeccion_num":proyeccion_num,"media_mov_num":round(media_mov_num,2),
+            "warmup_n":warmup_n,"warmup_fecha":warmup_fecha})
+    except Exception as e: return jsonify({"error":str(e)})
+
+@app.route("/sucesor_anguila")
+def sucesor_anguila():
+    try:
+        _,registros,_=leer_toda_biblia()
+        nombre_obj=nombre_objetivo_en_biblia(registros)
+        if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
+        regs=[r for r in registros if r.get("loteria")==nombre_obj]
+        regs.sort(key=lambda x:x.get("fecha",""))
+        if len(regs)<20: return jsonify({"error":"Insuficientes datos históricos (min 20 sorteos)"})
+        primeras=[r["numeros"][0] for r in regs if r.get("numeros")]
+        ultimos=primeras[-8:]
+        top=predecir_sucesor(regs,ventana=8)
+        # También construir tabla de decenas para mostrar en UI
+        trans,trans_dec=construir_matrices_transicion(primeras)
+        ultimo=primeras[-1] if primeras else "00"
+        dec_ult=str(int(ultimo)//10)
+        total_dec=sum(trans_dec[dec_ult].values()) or 1
+        tabla_decenas=[{"decena":d,"freq":f,"pct":round(f/total_dec*100,1)}
+            for d,f in sorted(trans_dec[dec_ult].items(),key=lambda x:-x[1])]
+        # ── Espejos: cuáles candidatos también salieron ayer en Anguilla ─────
+        _,por_fecha,_=preparar_indices(registros)
+        ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
+        nums_ayer_ang=Counter()
+        for rr in por_fecha.get(ayer,[]):
+            if es_anguila_cualquiera(rr.get("loteria","")):
+                for n in (rr.get("numeros") or [])[:3]:
+                    if n: nums_ayer_ang[n]+=1
+        # Añadir campo espejo a cada candidato del sucesor
+        for c in top:
+            c["esp_veces_ayer"]=nums_ayer_ang.get(c["numero"],0)
+        return jsonify({"loteria":nombre_obj,"total_hist":len(regs),
+            "ultimo_numero":ultimo,"ultimos_8":ultimos,"top_sucesor":top,
+            "tabla_decenas":tabla_decenas,"generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    except Exception as e: return jsonify({"error":str(e)})
+
+@app.route("/combo_anguila",methods=["POST"])
+def combo_anguila():
+    try:
+        _,registros,_=leer_toda_biblia()
+        nombre_obj=nombre_objetivo_en_biblia(registros)
+        if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
+        if aprendizaje["corriendo"]: return jsonify({"error":"Aprendizaje corriendo"})
+        _,por_fecha,_=preparar_indices(registros)
+        hoy=datetime.now().strftime("%Y-%m-%d")
+        ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
+        # ── Motor V5 ──────────────────────────────────────────────────────────
+        ia_data=ia_score_ganador_loteria(nombre_obj)
+        top100_v5=ia_data.get("top100_actual",[]) or []
+        max_prio=max((float(x.get("prioridad_v5",0) or 0) for x in top100_v5),default=1) or 1
+        v5_dict={x["numero"]:x for x in top100_v5}
+        top_v5_set={x["numero"] for x in ia_data.get("top_ia",[])[:20]}
+        # ── Motor Sucesor ─────────────────────────────────────────────────────
+        regs=[r for r in registros if r.get("loteria")==nombre_obj]
+        regs.sort(key=lambda x:x.get("fecha",""))
+        top_suc=predecir_sucesor(regs,ventana=8)
+        max_suc=max((float(x.get("score_suc",0) or 0) for x in top_suc),default=1) or 1
+        suc_dict={x["numero"]:x for x in top_suc}
+        top_suc_set={x["numero"] for x in top_suc[:20]}
+        # ── Motor Espejos (ayer en Anguilla → candidatos hoy) ─────────────────
+        regs_ang=[r for r in registros if es_anguila_cualquiera(r.get("loteria",""))]
+        T_ang=max(len(regs_ang),1)
+        ef1=Counter(); ef2=Counter(); ef3=Counter()
+        for rr in regs_ang:
+            for pos,n in enumerate((rr.get("numeros") or [])[:3]):
+                if not n: continue
+                if pos==0: ef1[n]+=1
+                elif pos==1: ef2[n]+=1
+                elif pos==2: ef3[n]+=1
+        nums=[str(i).zfill(2) for i in range(100)]
+        esp_scores={}
+        for n in nums:
+            esp_scores[n]=(ef1[n]/T_ang)*300+(ef2[n]/T_ang)*150+(ef3[n]/T_ang)*80
+        max_esp=max(esp_scores.values()) or 1
+        # Candidatos espejos: salieron ayer en Anguilla
+        nums_ayer_ang=Counter()
+        for rr in por_fecha.get(ayer,[]):
+            if es_anguila_cualquiera(rr.get("loteria","")):
+                for n in (rr.get("numeros") or [])[:3]:
+                    if n: nums_ayer_ang[n]+=1
+        top_esp_set={n for n,_ in nums_ayer_ang.most_common(25)}
+        # ── Predictabilidad por sorteo Anguilla ───────────────────────────────
+        # Para cada sorteo específico (10AM, 11AM, etc.) mide concentración de 1ras
+        pred_sorteo={}
+        for rr in regs_ang:
+            hora=rr.get("loteria","").replace("Anguilla ","").replace("Anguila ","").strip()
+            nn=rr.get("numeros",[])
+            if nn:
+                if hora not in pred_sorteo: pred_sorteo[hora]=Counter()
+                pred_sorteo[hora][nn[0]]+=1
+        predictabilidad=[]
+        for hora,cont in pred_sorteo.items():
+            tot=sum(cont.values()) or 1
+            top5=sum(v for _,v in cont.most_common(5))
+            top10=sum(v for _,v in cont.most_common(10))
+            score_pred=round(top5/tot*100,1)
+            predictabilidad.append({"hora":hora,"total":tot,
+                "concentracion_top5":score_pred,
+                "concentracion_top10":round(top10/tot*100,1)})
+        predictabilidad.sort(key=lambda x:-x["concentracion_top5"])
+        # ── Fusión TRIPLE: V5 + Sucesor + Espejos ────────────────────────────
+        combo=[]
+        for n in nums:
+            v5=v5_dict.get(n,{}); suc=suc_dict.get(n,{})
+            prio=float(v5.get("prioridad_v5",0) or 0)
+            sc_suc=float(suc.get("score_suc",0) or 0)
+            v5_norm=(prio/max_prio)*100
+            suc_norm=sc_suc
+            esp_norm=(esp_scores.get(n,0)/max_esp)*100
+            esp_boost=1.0+(nums_ayer_ang.get(n,0)-1)*0.18 if nums_ayer_ang.get(n,0)>0 else 0
+            esp_activo=n in top_esp_set
+            esp_score_final=esp_norm*esp_boost if esp_activo else 0
+            in_v5=n in top_v5_set; in_suc=n in top_suc_set; in_esp=esp_activo and esp_norm>=40
+            motores_activos=sum([in_v5,in_suc,in_esp])
+            bonus=30 if motores_activos>=3 else (18 if motores_activos==2 else 0)
+            combo_score=v5_norm*0.45+suc_norm*0.30+esp_score_final*0.25+bonus
+            if combo_score<=0.5: continue
+            if motores_activos>=3: fuente="🎯COMBO3"
+            elif in_v5 and in_suc: fuente="🎯COMBO"
+            elif in_v5 and in_esp: fuente="🪞+V5"
+            elif in_suc and in_esp: fuente="🪞+SUC"
+            elif in_v5: fuente="V5"
+            elif in_suc: fuente="SUC"
+            elif in_esp: fuente="🪞ESP"
+            else: fuente="BASE"
+            combo.append({
+                "numero":n,"combo_score":round(combo_score,4),
+                "score_v5":round(v5_norm,2),"score_suc":round(suc_norm,2),
+                "score_esp":round(esp_score_final,2),
+                "esp_veces_ayer":nums_ayer_ang.get(n,0),
+                "fuente":fuente,"in_rango_v5":in_v5,"in_top_suc":in_suc,"in_esp":in_esp,
+                "zona_ia":v5.get("zona_ia",""),"atraso":v5.get("atraso",9999),
+                "razones":v5.get("razones",[])[:4],
+                "freq_lag1":suc.get("freq_lag1",0),"pct_lag1":suc.get("pct_lag1",0),
+                "patron":suc.get("patron","")})
+        combo.sort(key=lambda x:x["combo_score"],reverse=True)
+        primeras=[r["numeros"][0] for r in regs if r.get("numeros")]
+        mejor_pred=predictabilidad[0] if predictabilidad else {}
+        return jsonify({"loteria":nombre_obj,"top_combo":combo[:30],
+            "ultimo_numero":ia_data.get("ultimo_numero_ganador",""),
+            "ultimos_5":primeras[-5:] if primeras else [],
+            "tendencia":ia_data.get("tendencia_ia",""),"confianza":ia_data.get("confianza",0),
+            "metricas":ia_data.get("metricas",{}),"rango_ia":ia_data.get("rango_ia",{}),
+            "predictabilidad_sorteos":predictabilidad[:8],
+            "mejor_sorteo_predecible":mejor_pred,
+            "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    except Exception as e: return jsonify({"error":str(e)})
+
+@app.route("/mismo_dia_anguila")
+def mismo_dia_anguila():
+    """Análisis de repetición intra-Anguilla (ayer) y cross-lottery (hoy)."""
+    try:
+        _,registros,_=leer_toda_biblia()
+        nombre_obj=nombre_objetivo_en_biblia(registros)
+        if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
+        _,por_fecha,_=preparar_indices(registros)
+        hoy=datetime.now().strftime("%Y-%m-%d")
+        ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
+        # ── Anguilla ayer: todos los ~15 sorteos ─────────────────────────────
+        draws_anguila_ayer=[rr for rr in por_fecha.get(ayer,[]) if es_anguila_cualquiera(rr.get("loteria",""))]
+        nums_ang_ayer=[]
+        for rr in draws_anguila_ayer: nums_ang_ayer.extend(rr.get("numeros",[]))
+        conteo_ang=Counter(nums_ang_ayer)
+        hot_ayer=[]
+        for n,cnt in sorted(conteo_ang.items(),key=lambda x:-x[1]):
+            if cnt<2: continue
+            apariciones=[rr.get("loteria","") for rr in draws_anguila_ayer if n in rr.get("numeros",[])]
+            hot_ayer.append({"numero":n,"count":cnt,"sorteos":apariciones[:6]})
+        # ── Hoy: otros sorteos no-Anguilla-10AM ya transcurridos ─────────────
+        draws_hoy_otros=[rr for rr in por_fecha.get(hoy,[]) if not es_objetivo(rr.get("loteria",""))]
+        nums_hoy=[]
+        for rr in draws_hoy_otros: nums_hoy.extend(rr.get("numeros",[]))
+        conteo_hoy=Counter(nums_hoy)
+        hot_hoy=[{"numero":n,"count":cnt} for n,cnt in sorted(conteo_hoy.items(),key=lambda x:-x[1]) if cnt>=2][:12]
+        # ── Tabla de todos los sorteos Anguilla ayer (resumen) ───────────────
+        resumen_ayer=[{"loteria":rr.get("loteria",""),"numeros":rr.get("numeros",[])} for rr in draws_anguila_ayer]
+        return jsonify({
+            "fecha":hoy,"ayer":ayer,
+            "hot_anguila_ayer":hot_ayer[:15],
+            "draws_anguila_ayer":len(draws_anguila_ayer),
+            "resumen_sorteos_ayer":resumen_ayer,
+            "hot_cross_hoy":hot_hoy,
+            "draws_hoy_otros":len(draws_hoy_otros),
+            "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    except Exception as e: return jsonify({"error":str(e)})
+
+@app.route("/espejos_anguila")
+def espejos_anguila():
+    """Motor de Espejos:
+    1. Score histórico de los 100 números basado en frecuencia en Anguilla
+    2. Los que salieron ayer en Anguilla (1ra+2da+3ra) → candidatos de hoy
+    3. Rankeados por su score histórico × veces que salieron ayer
+    4. Marca cuáles ya se confirmaron hoy en 1ra de algún sorteo Anguilla
+    5. Por cada número: a qué hora tiende a repetir al día siguiente
+    """
+    try:
+        _,registros,_=leer_toda_biblia()
+        nombre_obj=nombre_objetivo_en_biblia(registros)
+        if not nombre_obj: return jsonify({"error":"No hay datos de Anguilla 10AM"})
+        _,por_fecha,_=preparar_indices(registros)
+        # ── Score histórico de los 100 números ───────────────────────────────
+        regs_ang=[r for r in registros if es_anguila_cualquiera(r.get("loteria",""))]
+        regs_ang.sort(key=lambda x:x.get("fecha",""))
+        T=max(len(regs_ang),1)
+        f1=Counter(); f2=Counter(); f3=Counter()
+        rec45=regs_ang[-45:] if len(regs_ang)>=45 else regs_ang
+        f_rec=Counter()
+        for rr in regs_ang:
+            for pos,n in enumerate((rr.get("numeros") or [])[:3]):
+                if not n: continue
+                if pos==0: f1[n]+=1
+                elif pos==1: f2[n]+=1
+                elif pos==2: f3[n]+=1
+        for rr in rec45:
+            for n in (rr.get("numeros") or [])[:3]:
+                if n: f_rec[n]+=1
+        # ── Horario de repetición: D→D+1 (a qué hora confirma cada número) ──
+        # hora_rep[n] = Counter de horas donde n apareció en 1ra de Anguilla
+        #               el día siguiente a haber salido en cualquier posición
+        hora_rep=defaultdict(Counter)
+        fechas_ang=sorted(set(r.get("fecha","") for r in regs_ang if r.get("fecha")))
+        for i in range(len(fechas_ang)-1):
+            fd=fechas_ang[i]; fd1=fechas_ang[i+1]
+            try:
+                if (datetime.strptime(fd1,"%Y-%m-%d")-datetime.strptime(fd,"%Y-%m-%d")).days!=1: continue
+            except: continue
+            # Todos los números del día D
+            nums_d=set()
+            for rr in por_fecha.get(fd,[]):
+                if es_anguila_cualquiera(rr.get("loteria","")):
+                    for n in (rr.get("numeros") or [])[:3]:
+                        if n: nums_d.add(n)
+            if not nums_d: continue
+            # Registrar en qué hora confirman en 1ra el día D+1
+            for rr in por_fecha.get(fd1,[]):
+                if not es_anguila_cualquiera(rr.get("loteria","")): continue
+                nn=rr.get("numeros",[])
+                if not nn: continue
+                n=nn[0]
+                if n in nums_d:
+                    hora=rr.get("loteria","").replace("Anguilla ","").replace("Anguila ","").strip()
+                    hora_rep[n][hora]+=1
+        nums100=[str(i).zfill(2) for i in range(100)]
+        scores={}
+        for n in nums100:
+            s=(f1[n]/T)*300+(f2[n]/T)*150+(f3[n]/T)*80+f_rec[n]*6
+            scores[n]=round(s,4)
+        max_score=max(scores.values()) or 1
+        # Tabla de todos los 100 con score + horario de repetición
+        tabla_100=[]
+        for n in nums100:
+            sc=scores[n]; tot=f1[n]+f2[n]+f3[n]
+            horas=sorted(hora_rep[n].items(),key=lambda x:-x[1])
+            horas_top=[{"hora":h,"veces":v} for h,v in horas[:5]]
+            tabla_100.append({"numero":n,"score":sc,"score_pct":round(sc/max_score*100,1),
+                               "f1":f1[n],"f2":f2[n],"f3":f3[n],"total":tot,"rec45":f_rec[n],
+                               "horas_rep":horas_top})
+        tabla_100.sort(key=lambda x:-x["score"])
+        for i,item in enumerate(tabla_100): item["rank"]=i+1
+        rank_map={x["numero"]:x["rank"] for x in tabla_100}
+        hora_rep_map={x["numero"]:x["horas_rep"] for x in tabla_100}
+        # ── Ayer: todos los sorteos Anguilla ─────────────────────────────────
+        hoy=datetime.now().strftime("%Y-%m-%d")
+        ayer=(datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
+        nums_ayer={}
+        for rr in por_fecha.get(ayer,[]):
+            if not es_anguila_cualquiera(rr.get("loteria","")): continue
+            hora=rr.get("loteria","").replace("Anguilla ","").replace("Anguila ","")
+            for pos,n in enumerate((rr.get("numeros") or [])[:3]):
+                if not n: continue
+                lbl=["1ra","2da","3ra"][pos]
+                if n not in nums_ayer: nums_ayer[n]={"1ra":[],"2da":[],"3ra":[]}
+                nums_ayer[n][lbl].append(hora)
+        # ── Hoy: cuáles ya se confirmaron en 1ra de Anguilla ─────────────────
+        confirmados={}
+        for rr in por_fecha.get(hoy,[]):
+            if not es_anguila_cualquiera(rr.get("loteria","")): continue
+            nn=rr.get("numeros",[])
+            if nn:
+                n=nn[0]; hora=rr.get("loteria","").replace("Anguilla ","").replace("Anguila ","")
+                if n not in confirmados: confirmados[n]=[]
+                confirmados[n].append(hora)
+        # ── Candidatos de hoy: TODOS los que salieron ayer, sin filtro ───────
+        candidatos_hoy=[]
+        for n,pos_map in nums_ayer.items():
+            sc=scores.get(n,0)
+            rank=rank_map.get(n,99)
+            tot_ayer=sum(len(v) for v in pos_map.values())
+            posiciones=[{"pos":lbl,"veces":len(v),"sorteos":v[:5]}
+                        for lbl,v in pos_map.items() if v]
+            # Score candidato = score histórico boosteado por cuántas veces salió ayer
+            boost=1.0+(tot_ayer-1)*0.20  # cada aparición extra ayer suma 20%
+            score_cand=round(sc*boost,4)
+            candidatos_hoy.append({
+                "numero":n,"score_hist":sc,"score_hist_pct":round(sc/max_score*100,1),
+                "score_cand":score_cand,"rank_hist":rank,
+                "posiciones_ayer":posiciones,"total_ayer":tot_ayer,
+                "f1":f1[n],"f2":f2[n],"f3":f3[n],"rec45":f_rec[n],
+                "confirmado_hoy":n in confirmados,
+                "confirmado_sorteos":confirmados.get(n,[]),
+                "horas_rep":hora_rep_map.get(n,[])   # a qué hora tiende a repetir
+            })
+        # Confirmados primero → luego por score_cand desc
+        candidatos_hoy.sort(key=lambda x:(-int(x["confirmado_hoy"]),-x["score_cand"]))
+        return jsonify({
+            "tabla_100":tabla_100,
+            "candidatos_hoy":candidatos_hoy,
+            "total_sorteos_anguila":T,
+            "total_candidatos":len(candidatos_hoy),
+            "confirmados_hoy":len(confirmados),
+            "ayer":ayer,"hoy":hoy,
+            "generado":datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
     except Exception as e: return jsonify({"error":str(e)})
 
 @app.route("/heatmap_anguila")
@@ -830,11 +1301,17 @@ HTML = r"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5.0, user-scalable=yes">
 <title>🎯 Anguilla 10AM — IA PRO</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:#060b14;color:#e0ecff;font-family:Arial,sans-serif;padding:12px;-webkit-tap-highlight-color:transparent;}
+body{background:#060b14;color:#e0ecff;font-family:Arial,sans-serif;-webkit-tap-highlight-color:transparent;}
+#app-wrapper{padding:12px;transform-origin:top left;}
+/* Barra de zoom flotante */
+#zoom-bar{position:fixed;bottom:18px;right:12px;z-index:9999;display:flex;flex-direction:column;gap:6px;}
+#zoom-bar button{width:46px;height:46px;border-radius:50%;border:2px solid #00d4ff44;background:#0b1624ee;color:#00d4ff;font-size:20px;font-weight:bold;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px #00000088;}
+#zoom-bar button:active{background:#00d4ff22;}
+#zoom-label{text-align:center;font-size:10px;color:#4a7fa0;font-family:monospace;}
 h1{font-size:20px;color:#00d4ff;text-align:center;margin-bottom:4px;letter-spacing:1px;}
 .subtitle{text-align:center;color:#4a7fa0;font-size:12px;margin-bottom:14px;letter-spacing:2px;}
 .card{background:#0b1624;border:1px solid #1e3350;border-radius:14px;padding:14px;margin-bottom:12px;}
@@ -894,7 +1371,7 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
 .btn-toggle{background:#0d1e32;color:#6ab0d0;border:1px solid #1e3350;border-radius:7px;padding:7px 11px;font-size:12px;cursor:pointer;transition:all .2s;}
 .btn-toggle.active{background:#1e3350;color:#00d4ff;border-color:#00d4ff;}
 .y-axis{position:absolute;left:0;top:0;width:48px;height:280px;background:#07101b;border-right:1px solid #1e3350;z-index:2;pointer-events:none;}
-.chart-scroll{overflow-x:auto;overflow-y:hidden;width:100%;height:280px;padding-left:48px;}
+.chart-scroll{overflow-x:auto;overflow-y:hidden;width:100%;height:320px;padding-left:48px;}
 .chart-canvas{display:block;height:280px;}
 .grafica-tip{background:#0b1624;border:1px solid #1e3350;border-radius:8px;padding:10px;font-family:monospace;font-size:12px;margin-top:8px;white-space:pre-wrap;color:#b0cce0;min-height:44px;}
 .grafica-info{font-size:11px;color:#2a4a60;margin-bottom:6px;}
@@ -917,6 +1394,13 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
 </style>
 </head>
 <body>
+<!-- Barra zoom flotante -->
+<div id="zoom-bar">
+  <button onclick="cambiarZoom(0.1)" title="Agrandar">A+</button>
+  <div id="zoom-label">100%</div>
+  <button onclick="cambiarZoom(-0.1)" title="Reducir">A−</button>
+</div>
+<div id="app-wrapper">
 <h1>🎯 ANGUILLA 10AM</h1>
 <div class="subtitle">IA SCORE GANADOR V5 · PREDICCIONES EN VIVO</div>
 
@@ -958,8 +1442,16 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div class="log hidden" id="ap-log">Esperando aprendizaje...</div>
 </div>
 
-<!-- BOTÓN ANALIZAR -->
-<button class="btn-green" onclick="analizar()" style="margin-bottom:12px;border-radius:9px;border:none;font-size:16px;font-weight:bold;padding:16px;">⚡ ANALIZAR + PREDECIR</button>
+<!-- BOTONES ACCIÓN -->
+<button onclick="analizarCombo()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#d97706,#b45309);color:#fff;border:none;border-radius:10px;font-size:17px;font-weight:900;padding:17px;cursor:pointer;letter-spacing:.5px;margin-bottom:8px;box-shadow:0 0 18px #f59e0b44;">🎯 COMBO IA + SUCESOR</button>
+<div style="display:flex;gap:8px;margin-bottom:8px;">
+  <button class="btn-green" onclick="analizar()" style="flex:1;border-radius:9px;border:none;font-size:13px;font-weight:bold;padding:12px;">⚡ Solo V5</button>
+  <button style="flex:1;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:bold;padding:12px;cursor:pointer;" onclick="analizarSucesor()">🔄 Solo Sucesor</button>
+</div>
+<div style="display:flex;gap:8px;margin-bottom:12px;">
+  <button style="flex:1;background:linear-gradient(135deg,#c2410c,#ea580c);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:bold;padding:12px;cursor:pointer;" onclick="cargarMismoDia()">🔥 HOT DÍA</button>
+  <button style="flex:1;background:linear-gradient(135deg,#7e22ce,#c084fc);color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:bold;padding:12px;cursor:pointer;" onclick="cargarEspejos()">🪞 ESPEJOS</button>
+</div>
 <div id="msg-analizar" class="err hidden"></div>
 
 <!-- MÉTRICAS -->
@@ -982,8 +1474,10 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
     <button class="btn-toggle active" id="tog-ma15" onclick="toggleMA('ma15')">MA15</button>
     <button class="btn-toggle active" id="tog-ma30" onclick="toggleMA('ma30')">MA30</button>
     <button class="btn-toggle active" id="tog-nums" onclick="toggleMA('nums')">Nums</button>
+    <button class="btn-sm btn-main" onclick="cambiarEsp(-5)" style="font-size:14px;font-weight:bold;">−−</button>
     <button class="btn-sm btn-main" onclick="cambiarEsp(-2)">−</button>
     <button class="btn-sm btn-main" onclick="cambiarEsp(2)">+</button>
+    <button class="btn-sm btn-main" onclick="cambiarEsp(5)" style="font-size:14px;font-weight:bold;">++</button>
   </div>
   <div class="grafica-info" id="grafica-info">—</div>
   <div class="grafica-wrap" id="grafica-wrap" style="position:relative;">
@@ -1002,12 +1496,76 @@ button{width:100%;padding:13px;margin-top:8px;border-radius:9px;border:none;font
   <div id="pred-grid" class="pred-grid"></div>
 </div>
 
+<!-- COMBO -->
+<div class="card hidden" id="card-combo">
+  <div class="card-title" style="color:#f59e0b;">🎯 COMBO IA + SUCESOR</div>
+  <div style="font-size:11px;color:#4a7fa0;margin-bottom:6px;" id="combo-meta">—</div>
+  <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;" id="combo-badges"></div>
+  <div id="combo-grid" class="pred-grid"></div>
+</div>
+
+<!-- SUCESOR PATRÓN -->
+<div class="card hidden" id="card-sucesor">
+  <div class="card-title">🔄 Patrón Sucesor — Histórico Completo</div>
+  <div style="font-size:11px;color:#4a7fa0;margin-bottom:6px;" id="suc-meta">—</div>
+  <div style="margin-bottom:10px;">
+    <div style="font-size:11px;color:#6a8fa0;margin-bottom:4px;">CADENA RECIENTE (8 sorteos):</div>
+    <div id="suc-cadena" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+  </div>
+  <div style="margin-bottom:10px;">
+    <div style="font-size:11px;color:#6a8fa0;margin-bottom:4px;">DECENAS QUE SIGUIERON AL ÚLTIMO:</div>
+    <div id="suc-decenas" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+  </div>
+  <div style="font-size:11px;color:#6a8fa0;margin-bottom:6px;">TOP PROBABLES SEGÚN PATRONES HISTÓRICOS:</div>
+  <div id="suc-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;"></div>
+</div>
+
 <!-- HEATMAP -->
 <div class="card hidden" id="card-heatmap">
   <div class="card-title">🗺️ Mapa de Calor 1RA (00–99)</div>
   <div style="font-size:11px;color:#4a7fa0;margin-bottom:4px;">Color = frecuencia en 1ra posición. Toca para ver detalle.</div>
   <div id="heatmap-grid" class="heatmap-grid"></div>
   <div class="hm-tip" id="hm-tip"></div>
+</div>
+
+<!-- ESPEJOS HISTÓRICOS -->
+<div class="card hidden" id="card-espejos">
+  <div class="card-title" style="color:#c084fc;">🪞 ESPEJOS HISTÓRICOS — Día D → 10AM D+1</div>
+  <div style="font-size:11px;color:#4a7fa0;margin-bottom:10px;" id="esp-meta">—</div>
+  <div style="margin-bottom:14px;">
+    <div style="font-size:12px;color:#f59e0b;margin-bottom:4px;font-weight:bold;letter-spacing:1px;">⚡ CANDIDATOS HOY — salieron ayer en Anguilla:</div>
+    <div style="font-size:10px;color:#4a7fa0;margin-bottom:8px;">Verde ✅ = confirmado hoy · Barra = fuerza histórica · ⏰ = a qué hora suele repetir</div>
+    <!-- Filtro por hora -->
+    <div style="margin-bottom:8px;">
+      <div style="font-size:11px;color:#6a8fa0;margin-bottom:5px;">🕐 Filtrar por hora del próximo sorteo:</div>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;scrollbar-width:thin;">
+        <div id="esp-hora-filtros" style="display:flex;flex-direction:row;flex-wrap:nowrap;gap:5px;min-width:max-content;padding-bottom:6px;padding-right:4px;"></div>
+      </div>
+    </div>
+    <div id="esp-candidatos" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+  </div>
+  <div>
+    <div style="font-size:12px;color:#c084fc;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">🏆 MEJORES ESPEJOS HISTÓRICOS (1ra → 10AM):</div>
+    <div id="esp-tabla" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px;"></div>
+  </div>
+</div>
+
+<!-- ANGUILLA MISMO DÍA HOT -->
+<div class="card hidden" id="card-mismo-dia">
+  <div class="card-title" style="color:#ff6b35;">🔥 ANGUILLA HOT — Mismo Día</div>
+  <div style="font-size:11px;color:#4a7fa0;margin-bottom:10px;" id="md-meta">—</div>
+  <div style="margin-bottom:12px;">
+    <div style="font-size:12px;color:#ff6b35;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">🔥 REPETIDOS EN ANGUILLA AYER:</div>
+    <div id="md-hot-ayer" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+  </div>
+  <div style="margin-bottom:10px;">
+    <div style="font-size:12px;color:#00d4ff;margin-bottom:6px;font-weight:bold;letter-spacing:1px;">⚡ HOT EN OTRAS LOTERÍAS HOY:</div>
+    <div id="md-hot-hoy" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+  </div>
+  <div>
+    <div style="font-size:11px;color:#6a8fa0;margin-bottom:4px;">SORTEOS ANGUILLA AYER:</div>
+    <div id="md-resumen" style="display:flex;gap:4px;flex-wrap:wrap;max-height:120px;overflow-y:auto;padding:4px 0;"></div>
+  </div>
 </div>
 
 <!-- CONTROL -->
@@ -1120,6 +1678,407 @@ async function analizar(){
 }
 
 // ═══════════════════════════════════════════
+// COMBO IA + SUCESOR
+// ═══════════════════════════════════════════
+async function analizarCombo(){
+  const msg=document.getElementById("msg-analizar");
+  msg.className="success-msg"; msg.textContent="⏳ Fusionando V5 + Sucesor..."; msg.classList.remove("hidden");
+  try{
+    const r=await fetch("/combo_anguila",{method:"POST",headers:{"Content-Type":"application/json"}});
+    const d=await r.json();
+    if(d.error){msg.className="err"; msg.textContent="❌ "+d.error; return;}
+    pintarCombo(d);
+    // También mostrar gráfica si no está visible
+    const rg=await fetch("/grafica_anguila");
+    const dg=await rg.json();
+    if(!dg.error){graficaData=dg; document.getElementById("card-grafica").classList.remove("hidden"); animarGrafica();}
+    // También cargar Anguilla HOT mismo día
+    try{
+      const rm=await fetch("/mismo_dia_anguila");
+      const dm=await rm.json();
+      if(!dm.error) pintarMismoDia(dm);
+    }catch(_){}
+    msg.textContent="✅ COMBO listo · "+d.generado;
+  }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+function pintarCombo(d){
+  const card=document.getElementById("card-combo");
+  card.classList.remove("hidden");
+  const m=d.metricas||{};
+  document.getElementById("combo-meta").textContent=
+    `${m.puntos_memoria||"?"} memoria · Confianza: ${d.confianza||"?"}% · Último: ${d.ultimo_numero||"?"} · tend:${d.tendencia||""}`;
+  // Badges últimos 5
+  const bRow=document.getElementById("combo-badges");
+  bRow.innerHTML="";
+  (d.ultimos_5||[]).forEach((n,i)=>{
+    const sp=document.createElement("span");
+    sp.className="badge";
+    sp.style.cssText=i===d.ultimos_5.length-1?"background:#f59e0b22;border-color:#f59e0b;color:#f59e0b;":"";
+    sp.textContent=n;
+    bRow.appendChild(sp);
+  });
+  // ── Predictabilidad por sorteo ────────────────────────────────────────────
+  const preds=d.predictabilidad_sorteos||[];
+  if(preds.length>0){
+    const mejor=d.mejor_sorteo_predecible||preds[0];
+    const predHtml=preds.slice(0,6).map((p,i)=>{
+      const col=i===0?"#00ff88":i<3?"#f59e0b":"#4a7fa0";
+      const w=Math.round(p.concentracion_top5);
+      return `<div style="background:#04080f;border:1px solid ${col}44;border-radius:8px;padding:6px 8px;text-align:center;min-width:70px;flex-shrink:0;">
+        <div style="font-size:10px;color:${col};font-weight:bold;">${p.hora}</div>
+        <div style="height:3px;background:#1e3350;border-radius:2px;margin:3px 0;"><div style="height:100%;width:${w}%;background:${col};border-radius:2px;"></div></div>
+        <div style="font-size:11px;color:${col};font-weight:bold;">${p.concentracion_top5}%</div>
+        <div style="font-size:8px;color:#4a7fa0;">${p.total} sorteos</div>
+      </div>`;
+    }).join("");
+    bRow.insertAdjacentHTML("beforeend",
+      `<div style="width:100%;margin-top:8px;">
+        <div style="font-size:11px;color:#00ff88;font-weight:bold;margin-bottom:5px;">
+          🎯 SORTEO MÁS PREDECIBLE: ${mejor.hora} (${mejor.concentracion_top5}% top5)
+          ${mejor.hora==="10AM"?"← ¡Es el 10AM! Jugada segura":"← Considera jugar este también"}
+        </div>
+        <div style="display:flex;gap:5px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;">
+          ${predHtml}
+        </div>
+      </div>`
+    );
+  }
+  // ── Grid COMBO ────────────────────────────────────────────────────────────
+  const grid=document.getElementById("combo-grid");
+  grid.innerHTML="";
+  (d.top_combo||[]).slice(0,20).forEach((c,i)=>{
+    const isC3=c.fuente==="🎯COMBO3";
+    const isCombo=c.fuente==="🎯COMBO"||isC3;
+    const isEsp=c.fuente?.includes("🪞");
+    const rankColor=i===0?"#ffd700":i<3?"#f59e0b":isC3?"#00ff88":isCombo?"#00d4ff":isEsp?"#c084fc":i<10?"#00e090":"#4a7fa0";
+    const glow=isC3?"box-shadow:0 0 12px #00ff8833;":isCombo?"box-shadow:0 0 10px #f59e0b33;":"";
+    const topBar=isC3
+      ?'<div style="position:absolute;top:-1px;left:0;right:0;height:2px;background:linear-gradient(90deg,#00ff88,#f59e0b,#c084fc);border-radius:10px 10px 0 0;"></div>'
+      :isCombo?'<div style="position:absolute;top:-1px;left:0;right:0;height:2px;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-radius:10px 10px 0 0;"></div>':'';
+    const borderStyle=isC3?"2px solid #00ff88":isCombo?"2px solid #f59e0b":isEsp?"1.5px solid #c084fc55":"1.5px solid "+rankColor+"44";
+    const el=document.createElement("div");
+    el.style.cssText=`background:#060b14;border:${borderStyle};border-radius:10px;padding:10px 6px;text-align:center;position:relative;${glow}`;
+    const barV=Math.max(1,Math.round(c.score_v5));
+    const barS=Math.max(1,Math.round(c.score_suc));
+    const barE=Math.max(1,Math.round(c.score_esp||0));
+    const espLabel=c.esp_veces_ayer>0
+      ?`<div style="font-size:8px;color:#c084fc;margin-top:1px;">🪞${c.esp_veces_ayer}× ayer</div>`:"";
+    el.innerHTML=`
+      ${topBar}
+      <div style="font-size:9px;color:${rankColor};margin-bottom:1px;">#${i+1} ${c.fuente}</div>
+      <div style="font-size:28px;font-weight:bold;color:#e8f4ff;font-family:monospace;line-height:1.1;">${c.numero}</div>
+      <div style="font-size:9px;color:#f59e0b;margin:2px 0;">${c.combo_score.toFixed(1)}pts</div>
+      <div style="display:flex;gap:1px;margin:3px 0;height:4px;border-radius:3px;overflow:hidden;">
+        <div style="flex:${barV};background:#00d4ff;opacity:.8;" title="V5"></div>
+        <div style="flex:${barS};background:#f59e0b;opacity:.8;" title="SUC"></div>
+        <div style="flex:${barE};background:#c084fc;opacity:.8;" title="ESP"></div>
+      </div>
+      <div style="display:flex;justify-content:center;gap:3px;font-size:8px;flex-wrap:wrap;">
+        <span style="color:#00d4ff;">V5:${c.score_v5.toFixed(0)}</span>
+        <span style="color:#f59e0b;">S:${c.score_suc.toFixed(0)}</span>
+        <span style="color:#c084fc;">E:${c.score_esp?.toFixed(0)||0}</span>
+      </div>
+      ${espLabel}
+      ${c.pct_lag1>0?`<div style="font-size:8px;color:#2a4a60;margin-top:1px;">L1:${c.pct_lag1}%</div>`:""}
+    `;
+    grid.appendChild(el);
+  });
+  card.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+// ═══════════════════════════════════════════
+// PATRÓN SUCESOR
+// ═══════════════════════════════════════════
+async function analizarSucesor(){
+  const msg=document.getElementById("msg-analizar");
+  msg.className="success-msg"; msg.textContent="⏳ Buscando patrones sucesores..."; msg.classList.remove("hidden");
+  try{
+    const r=await fetch("/sucesor_anguila");
+    const d=await r.json();
+    if(d.error){msg.className="err"; msg.textContent="❌ "+d.error; return;}
+    pintarSucesor(d);
+    msg.textContent="✅ Patrón sucesor listo · "+d.generado;
+  }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+function pintarSucesor(d){
+  const card=document.getElementById("card-sucesor");
+  card.classList.remove("hidden");
+  document.getElementById("suc-meta").textContent=
+    `${d.total_hist} sorteos históricos · Último ganador: ${d.ultimo_numero} · ${d.generado}`;
+
+  // Cadena de últimos 8
+  const cadena=document.getElementById("suc-cadena");
+  cadena.innerHTML="";
+  (d.ultimos_8||[]).forEach((n,i)=>{
+    const isLast=i===d.ultimos_8.length-1;
+    const el=document.createElement("div");
+    el.style.cssText=`background:${isLast?"#00d4ff22":"#1e3350"};border:1px solid ${isLast?"#00d4ff":"#2a4a70"};border-radius:6px;padding:6px 10px;font-family:monospace;font-size:15px;font-weight:bold;color:${isLast?"#00d4ff":"#b0cce0"};`;
+    el.textContent=n;
+    cadena.appendChild(el);
+    if(!isLast){const arr=document.createElement("span");arr.textContent="→";arr.style.cssText="color:#2a4a70;line-height:30px;font-size:14px;";cadena.appendChild(arr);}
+  });
+  // Flecha final
+  const fq=document.createElement("span");fq.textContent="→ ?";fq.style.cssText="color:#00d4ff;line-height:30px;font-size:15px;font-weight:bold;";cadena.appendChild(fq);
+
+  // Tabla de decenas
+  const decDiv=document.getElementById("suc-decenas");
+  decDiv.innerHTML="";
+  (d.tabla_decenas||[]).slice(0,10).forEach(td=>{
+    const el=document.createElement("div");
+    const dec=Number(td.decena)*10;
+    el.style.cssText=`background:#0b1624;border:1px solid #1e3350;border-radius:6px;padding:5px 8px;text-align:center;min-width:52px;`;
+    el.innerHTML=`<div style="font-size:13px;font-weight:bold;color:#00d4ff;font-family:monospace;">${String(dec).padStart(2,"0")}s</div><div style="font-size:10px;color:#ffaa00;">${td.pct}%</div><div style="font-size:9px;color:#4a7fa0;">${td.freq}x</div>`;
+    decDiv.appendChild(el);
+  });
+
+  // Grid de candidatos
+  const grid=document.getElementById("suc-grid");
+  grid.innerHTML="";
+  (d.top_sucesor||[]).slice(0,20).forEach((c,i)=>{
+    const el=document.createElement("div");
+    const isEsp=(c.esp_veces_ayer||0)>0;
+    const rankColor=i<3?"#ffd700":i<7?"#00d4ff":i<12?"#00e090":"#4a7fa0";
+    const borderStyle=isEsp?`2px solid #c084fc`:`1.5px solid ${rankColor}44`;
+    const glow=isEsp?"box-shadow:0 0 10px #c084fc44;":"";
+    el.style.cssText=`background:#060b14;border:${borderStyle};border-radius:9px;padding:10px 6px;text-align:center;position:relative;${glow}`;
+    const barW=Math.max(4,c.score_suc);
+    const espBadge=isEsp
+      ?`<div style="font-size:8px;color:#c084fc;font-weight:bold;margin-top:2px;">🪞${c.esp_veces_ayer}× ayer</div>`:"";
+    el.innerHTML=`
+      <div style="position:absolute;top:0;left:0;width:${barW}%;height:3px;background:${isEsp?"#c084fc":rankColor};border-radius:9px 9px 0 0;opacity:.7;"></div>
+      <div style="font-size:9px;color:${rankColor};margin-bottom:2px;">#${i+1}${isEsp?" 🪞":""}</div>
+      <div style="font-size:26px;font-weight:bold;color:#e8f4ff;font-family:monospace;line-height:1.1;">${c.numero}</div>
+      <div style="font-size:9px;color:#ffaa00;margin-top:2px;">${c.score_suc}pts</div>
+      <div style="font-size:9px;color:#4a7fa0;margin-top:2px;">L1:${c.pct_lag1}% DEC:${c.pct_dec}%</div>
+      <div style="font-size:8px;color:#2a4a60;margin-top:1px;">${c.patron||""}</div>
+      ${espBadge}`;
+    grid.appendChild(el);
+  });
+  grid.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+// ═══════════════════════════════════════════
+// ESPEJOS HISTÓRICOS
+// ═══════════════════════════════════════════
+async function cargarEspejos(){
+  const msg=document.getElementById("msg-analizar");
+  msg.className="success-msg"; msg.textContent="⏳ Calculando espejos históricos..."; msg.classList.remove("hidden");
+  try{
+    const r=await fetch("/espejos_anguila");
+    const d=await r.json();
+    if(d.error){msg.className="err"; msg.textContent="❌ "+d.error; return;}
+    pintarEspejos(d);
+    msg.textContent="✅ Espejos históricos listos · "+d.generado;
+  }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+let _espData=null; // guarda datos para re-filtrar sin nueva llamada al server
+
+function pintarEspejos(d){
+  _espData=d;
+  const card=document.getElementById("card-espejos");
+  card.classList.remove("hidden");
+  const conf=d.confirmados_hoy||0;
+  document.getElementById("esp-meta").textContent=
+    `📊 ${d.total_sorteos_anguila} sorteos Anguilla · `+
+    `${d.total_candidatos} candidatos de ayer · `+
+    (conf>0?`✅ ${conf} confirmados hoy · `:`sin confirmaciones aún · `)+d.generado;
+
+  // ── Construir botones de hora dinámicamente desde los datos ──────────────
+  const filtrosDiv=document.getElementById("esp-hora-filtros");
+  filtrosDiv.innerHTML="";
+  // Recolectar todas las horas que aparecen en horas_rep de candidatos
+  const horasSet=new Set();
+  (d.candidatos_hoy||[]).forEach(c=>(c.horas_rep||[]).forEach(h=>horasSet.add(h.hora)));
+  // Ordenar horas cronológicamente
+  const ordenHora=h=>{
+    const m=h.match(/(\d+)(AM|PM)/i);
+    if(!m) return 99;
+    let hr=parseInt(m[1]);
+    if(m[2].toUpperCase()==="PM"&&hr!==12) hr+=12;
+    if(m[2].toUpperCase()==="AM"&&hr===12) hr=0;
+    return hr;
+  };
+  const horasOrdenadas=["TODAS",...Array.from(horasSet).sort((a,b)=>ordenHora(a)-ordenHora(b))];
+  horasOrdenadas.forEach(hora=>{
+    const btn=document.createElement("button");
+    btn.textContent=hora==="TODAS"?"🔄 Todas":hora;
+    btn.dataset.hora=hora;
+    btn.style.cssText=`background:#0b1624;border:1px solid #1e3350;color:#6ab0d0;border-radius:7px;`+
+      `padding:6px 11px;font-size:12px;font-weight:bold;cursor:pointer;transition:all .15s;flex-shrink:0;white-space:nowrap;`;
+    btn.onclick=()=>filtrarEspejosPorHora(hora,btn);
+    filtrosDiv.appendChild(btn);
+  });
+
+  // ── TODOS los candidatos de ayer, ordenados por score ────────────────────
+  const candDiv=document.getElementById("esp-candidatos");
+  // Render inicial con "Todas" (delega a filtrarEspejosPorHora)
+  filtrarEspejosPorHora("TODAS", document.querySelector("#esp-hora-filtros button"));
+
+  // ── TOP 20 ranking histórico de fuerza de los 100 números ────────────────
+  const tabDiv=document.getElementById("esp-tabla");
+  tabDiv.innerHTML="";
+  (d.tabla_100||[]).slice(0,20).forEach((e,i)=>{
+    const calor=i===0?"#ffd700":i<3?"#f59e0b":i<8?"#00d4ff":i<15?"#c084fc":"#4a7fa0";
+    const barW=Math.round(e.score_pct||0);
+    const esConf=(d.candidatos_hoy||[]).some(c=>c.numero===e.numero&&c.confirmado_hoy);
+    const esActivo=(d.candidatos_hoy||[]).some(c=>c.numero===e.numero);
+    const borde=esConf?"2px solid #00ff88":esActivo?`2px solid ${calor}`:`1px solid ${calor}33`;
+    const el=document.createElement("div");
+    el.style.cssText=`background:#04080f;border:${borde};border-radius:9px;padding:7px 5px;text-align:center;${esConf?"box-shadow:0 0 8px #00ff8844;":""}`;
+    el.innerHTML=
+      `<div style="font-size:9px;color:${calor};">#${i+1}${esConf?" ✅":esActivo?" ⚡":""}</div>`+
+      `<div style="font-size:22px;font-weight:bold;color:#e8f4ff;font-family:monospace;">${e.numero}</div>`+
+      `<div style="height:3px;background:#1e3350;border-radius:2px;margin:3px 0;"><div style="height:100%;width:${barW}%;background:${calor};border-radius:2px;"></div></div>`+
+      `<div style="font-size:10px;color:${calor};font-weight:bold;">${e.score_pct}%</div>`+
+      `<div style="font-size:8px;color:#4a7fa0;">${e.f1}·${e.f2}·${e.f3}</div>`;
+    tabDiv.appendChild(el);
+  });
+
+  card.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+function filtrarEspejosPorHora(horaFiltro, btnActivo){
+  if(!_espData) return;
+  // Resaltar botón activo
+  document.querySelectorAll("#esp-hora-filtros button").forEach(b=>{
+    b.style.background="#0b1624"; b.style.borderColor="#1e3350"; b.style.color="#6ab0d0";
+  });
+  if(btnActivo){
+    btnActivo.style.background="#1e3350"; btnActivo.style.borderColor="#00d4ff";
+    btnActivo.style.color="#00d4ff";
+  }
+  const candDiv=document.getElementById("esp-candidatos");
+  candDiv.innerHTML="";
+  let lista=[...(_espData.candidatos_hoy||[])];
+  if(horaFiltro!=="TODAS"){
+    // Filtrar: solo candidatos con al menos 1 confirmación en esa hora
+    lista=lista.filter(c=>(c.horas_rep||[]).some(h=>h.hora===horaFiltro));
+    // Reordenar: primero por veces confirmado en esa hora, luego por score
+    lista.sort((a,b)=>{
+      const va=(a.horas_rep||[]).find(h=>h.hora===horaFiltro)?.veces||0;
+      const vb=(b.horas_rep||[]).find(h=>h.hora===horaFiltro)?.veces||0;
+      if(vb!==va) return vb-va;
+      return b.score_cand-a.score_cand;
+    });
+  }
+  if(lista.length===0){
+    candDiv.innerHTML=`<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin candidatos con historial en ${horaFiltro}</div>`;
+    return;
+  }
+  lista.forEach((c,i)=>{
+    const tot=c.total_ayer||1;
+    const pctH=c.score_hist_pct||0;
+    const conf=c.confirmado_hoy;
+    const rank=c.rank_hist||99;
+    const calor=conf?"#00ff88":rank<=10?"#ffd700":rank<=25?"#f59e0b":rank<=50?"#00d4ff":"#6a8fa0";
+    const borde=conf?"3px solid #00ff88":`1.5px solid ${calor}55`;
+    const glow=conf?"box-shadow:0 0 14px #00ff8866;":"";
+    const llama=tot>=4?"🔥🔥":tot>=3?"🔥":tot>=2?"⚡":"";
+    const posHtml=(c.posiciones_ayer||[]).map(p=>{
+      const col=p.pos==="1ra"?"#00e090":p.pos==="2da"?"#00d4ff":"#ffaa00";
+      return `<span style="background:#0a1525;border:1px solid ${col}55;border-radius:4px;padding:1px 5px;font-size:9px;color:${col};">${p.pos}×${p.veces}</span>`;
+    }).join(" ");
+    // Hora seleccionada destacada
+    const horasHtml=(c.horas_rep||[]).slice(0,4).map((h,hi)=>{
+      const activa=h.hora===horaFiltro&&horaFiltro!=="TODAS";
+      const hcol=activa?"#00ff88":hi===0?"#f59e0b":hi===1?"#00d4ff":"#4a7fa0";
+      const bg=activa?"background:#001a0a;border-color:#00ff8888;":"";
+      return `<div style="background:#080f1a;border:1px solid ${hcol}55;border-radius:5px;padding:2px 5px;font-size:9px;color:${hcol};white-space:nowrap;${bg}">${h.hora}<span style="color:#4a7fa0;"> ${h.veces}×</span></div>`;
+    }).join("");
+    const horasBloque=horasHtml
+      ?`<div style="margin-top:5px;"><div style="font-size:8px;color:#4a7fa0;margin-bottom:2px;">⏰ repite en:</div><div style="display:flex;flex-wrap:wrap;gap:2px;justify-content:center;">${horasHtml}</div></div>`:"";
+    const confLabel=conf
+      ?`<div style="font-size:10px;color:#00ff88;font-weight:bold;margin-top:3px;">✅ ${(c.confirmado_sorteos||[]).join(" · ")}</div>`:"";
+    // Veces en la hora seleccionada (destacado arriba si hay filtro)
+    const vecesHoraLabel=horaFiltro!=="TODAS"
+      ?`<div style="font-size:10px;color:#00ff88;font-weight:bold;margin-bottom:1px;">${(c.horas_rep||[]).find(h=>h.hora===horaFiltro)?.veces||0}× en ${horaFiltro}</div>`:"";
+    const el=document.createElement("div");
+    el.style.cssText=`background:#04080f;border:${borde};border-radius:12px;padding:10px 10px;text-align:center;min-width:76px;${glow}`;
+    el.innerHTML=
+      vecesHoraLabel+
+      `<div style="font-size:9px;color:${calor};font-weight:bold;">${llama}#${rank}</div>`+
+      `<div style="font-size:34px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;margin:2px 0;">${c.numero}</div>`+
+      `<div style="height:3px;background:#1e3350;border-radius:2px;margin:3px 0;"><div style="height:100%;width:${pctH}%;background:${calor};border-radius:2px;"></div></div>`+
+      `<div style="font-size:10px;color:${calor};font-weight:bold;">${pctH.toFixed(0)}% fza</div>`+
+      `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin:3px 0;">${posHtml}</div>`+
+      `<div style="font-size:9px;color:#4a7fa0;">${c.f1||0}×1 ${c.f2||0}×2 ${c.f3||0}×3</div>`+
+      horasBloque+confLabel;
+    candDiv.appendChild(el);
+  });
+}
+
+// ═══════════════════════════════════════════
+// ANGUILLA MISMO DÍA HOT
+// ═══════════════════════════════════════════
+async function cargarMismoDia(){
+  const msg=document.getElementById("msg-analizar");
+  msg.className="success-msg"; msg.textContent="⏳ Analizando Anguilla mismo día..."; msg.classList.remove("hidden");
+  try{
+    const r=await fetch("/mismo_dia_anguila");
+    const d=await r.json();
+    if(d.error){msg.className="err"; msg.textContent="❌ "+d.error; return;}
+    pintarMismoDia(d);
+    msg.textContent="✅ Anguilla HOT cargado · "+d.generado;
+  }catch(e){msg.className="err"; msg.textContent="❌ "+e;}
+}
+
+function pintarMismoDia(d){
+  const card=document.getElementById("card-mismo-dia");
+  card.classList.remove("hidden");
+  document.getElementById("md-meta").textContent=
+    `📅 Ayer: ${d.ayer} · Anguilla: ${d.draws_anguila_ayer} sorteos · Otras loterías hoy: ${d.draws_hoy_otros} · ${d.generado}`;
+
+  // HOT ayer en Anguilla (repetidos 2+ veces)
+  const hotAyer=document.getElementById("md-hot-ayer");
+  hotAyer.innerHTML="";
+  if((d.hot_anguila_ayer||[]).length===0){
+    hotAyer.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin repeticiones en Anguilla ayer</div>';
+  } else {
+    (d.hot_anguila_ayer||[]).forEach(h=>{
+      const heat=h.count>=5?"#ff1144":h.count>=4?"#ff3300":h.count>=3?"#ff6600":h.count>=2?"#ffaa00":"#888";
+      const el=document.createElement("div");
+      el.style.cssText=`background:#120404;border:2px solid ${heat};border-radius:12px;padding:10px 14px;text-align:center;min-width:72px;box-shadow:0 0 8px ${heat}44;`;
+      const sortHoras=(h.sorteos||[]).slice(0,3).map(s=>s.replace(/Anguill?a\s*/i,"")).join(" · ");
+      el.innerHTML=`<div style="font-size:32px;font-weight:bold;color:#fff;font-family:monospace;line-height:1.1;">${h.numero}</div>`+
+        `<div style="font-size:12px;color:${heat};font-weight:bold;margin-top:2px;">${h.count}× AYER</div>`+
+        `<div style="font-size:9px;color:#4a7fa0;margin-top:3px;">${sortHoras}</div>`;
+      hotAyer.appendChild(el);
+    });
+  }
+
+  // HOT cross-lottery hoy
+  const hotHoy=document.getElementById("md-hot-hoy");
+  hotHoy.innerHTML="";
+  if((d.hot_cross_hoy||[]).length===0){
+    hotHoy.innerHTML='<div style="color:#4a7fa0;font-size:12px;padding:8px;">Sin datos cruzados de hoy aún</div>';
+  } else {
+    (d.hot_cross_hoy||[]).forEach(h=>{
+      const el=document.createElement("div");
+      el.style.cssText=`background:#001a22;border:2px solid #00d4ff55;border-radius:10px;padding:8px 12px;text-align:center;min-width:62px;`;
+      el.innerHTML=`<div style="font-size:24px;font-weight:bold;color:#e8f4ff;font-family:monospace;">${h.numero}</div>`+
+        `<div style="font-size:11px;color:#00d4ff;font-weight:bold;">${h.count}×</div>`;
+      hotHoy.appendChild(el);
+    });
+  }
+
+  // Resumen sorteos Anguilla ayer (lista compacta)
+  const resDiv=document.getElementById("md-resumen");
+  resDiv.innerHTML="";
+  (d.resumen_sorteos_ayer||[]).forEach(rr=>{
+    const el=document.createElement("div");
+    const hora=rr.loteria.replace(/Anguill?a\s*/i,"");
+    el.style.cssText="background:#0b1624;border:1px solid #1e3350;border-radius:6px;padding:4px 8px;font-size:10px;color:#b0cce0;white-space:nowrap;";
+    el.innerHTML=`<span style="color:#4a7fa0;">${hora}</span>: <b style="color:#e8f4ff;">${(rr.numeros||[]).join(" ")}</b>`;
+    resDiv.appendChild(el);
+  });
+
+  card.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+// ═══════════════════════════════════════════
 // MÉTRICAS
 // ═══════════════════════════════════════════
 function pintarMetricas(d){
@@ -1193,7 +2152,7 @@ function toggleMA(key){
   if(graficaData) dibujarGrafica(1.0);
 }
 
-function cambiarEsp(d){ espacioPuntos=Math.max(3,Math.min(30,espacioPuntos+d)); if(graficaData) dibujarGrafica(1.0); }
+function cambiarEsp(d){ espacioPuntos=Math.max(2,Math.min(120,espacioPuntos+d)); if(graficaData) dibujarGrafica(1.0); }
 
 function animarGrafica(){
   if(animFrame) cancelAnimationFrame(animFrame);
@@ -1206,12 +2165,43 @@ function animarGrafica(){
   animFrame=requestAnimationFrame(frame);
 }
 
+// ── Pinch-to-zoom en el chart ─────────────────────────────────────────────
+(function(){
+  let pinchDist0=0, esp0=0;
+  const scroll=document.getElementById("chart-scroll");
+  scroll.addEventListener("touchstart",function(e){
+    if(e.touches.length===2){
+      pinchDist0=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                            e.touches[0].clientY-e.touches[1].clientY);
+      esp0=espacioPuntos;
+    }
+  },{passive:true});
+  scroll.addEventListener("touchmove",function(e){
+    if(e.touches.length===2){
+      e.preventDefault();
+      const dist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                            e.touches[0].clientY-e.touches[1].clientY);
+      const ratio=dist/(pinchDist0||1);
+      espacioPuntos=Math.max(2,Math.min(120,Math.round(esp0*ratio)));
+      if(graficaData) dibujarGrafica(1.0);
+    }
+  },{passive:false});
+})();
+
 function calcMA(valores,ventana){
   return valores.map((_,i)=>{
     if(i<ventana-1) return null;
     const sl=valores.slice(i-ventana+1,i+1);
     return sl.reduce((a,b)=>a+b,0)/ventana;
   });
+}
+
+function numColor(score,srmin,srmax,warmup){
+  // Verde = IA lo predijo (score en rango), Amarillo = frío, Rojo = quemado
+  if(warmup) return "rgba(130,130,160,.55)";
+  if(score>=srmin&&score<=srmax) return "rgba(0,210,120,1)";
+  if(score<srmin) return "rgba(255,190,30,1)";
+  return "rgba(255,60,60,1)";
 }
 
 function dibujarGrafica(prog){
@@ -1222,52 +2212,88 @@ function dibujarGrafica(prog){
   const yAxis=document.getElementById("y-axis");
   const scroll=document.getElementById("chart-scroll");
   const ctx=canvas.getContext("2d");
-  const h=280, padTop=18, padBottom=26, usableH=h-padTop-padBottom;
-  const minY=Number(graficaData.escala_min||0), maxY=Number(graficaData.escala_max||100);
-  const rango=maxY-minY||1;
-  const espacioFuturo=Math.max(130,espacioPuntos*14);
+  const h=300, padTop=18, padBottom=28, padRight=54, usableH=h-padTop-padBottom;
+
+  // Escala FIJA 0-99 (espacio de números)
+  const minY=-3, maxY=102, rango=maxY-minY;
+  const espacioFuturo=Math.max(140,espacioPuntos*16);
   const w=Math.max(scroll.clientWidth-48,80+puntos.length*espacioPuntos+espacioFuturo);
   canvas.width=w; canvas.height=h; canvas.style.width=w+"px"; canvas.style.height=h+"px";
 
-  function yp(score){ return padTop+((maxY-score)/rango)*usableH; }
+  function yp(n){ return padTop+((maxY-n)/rango)*usableH; }
   function xp(i){ return 10+i*espacioPuntos; }
 
   ctx.clearRect(0,0,w,h);
 
-  const rmin=Number(graficaData.rango_min||minY), rmax=Number(graficaData.rango_max||maxY);
+  const warmupN=Number(graficaData.warmup_n||50);
+  const warmupX=puntos.length>warmupN?xp(warmupN):-1;
+  const fondoX=Math.max(0,warmupX);
 
-  // Zonas de fondo
-  ctx.fillStyle="rgba(255,50,50,.06)"; ctx.fillRect(0,padTop,w,Math.max(0,yp(rmax)-padTop));
-  ctx.fillStyle="rgba(0,200,120,.10)"; ctx.fillRect(0,yp(rmax),w,Math.max(0,yp(rmin)-yp(rmax)));
-  ctx.fillStyle="rgba(255,170,0,.06)"; ctx.fillRect(0,yp(rmin),w,Math.max(0,h-padBottom-yp(rmin)));
+  // ── Zona calentamiento (gris) ─────────────────────────────────────────────
+  if(warmupX>0){
+    ctx.fillStyle="rgba(70,70,90,.20)";
+    ctx.fillRect(0,padTop,warmupX,usableH);
+  }
 
-  // Líneas guía horizontales
-  ctx.strokeStyle="rgba(200,230,255,.13)"; ctx.lineWidth=1; ctx.setLineDash([5,7]);
-  (graficaData.niveles||[]).forEach(n=>{ const yy=yp(Number(n)); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(w,yy); ctx.stroke(); });
+  // ── Zona reciente de números (IQR últimos 30 — banda verde tenue) ─────────
+  const nzMin=Number(graficaData.num_zona_min??25);
+  const nzMax=Number(graficaData.num_zona_max??75);
+  ctx.fillStyle="rgba(0,200,120,.09)";
+  ctx.fillRect(fondoX,yp(nzMax),w-fondoX-padRight,Math.max(2,yp(nzMin)-yp(nzMax)));
+
+  // ── Cuadrícula horizontal cada 10 números ─────────────────────────────────
+  ctx.strokeStyle="rgba(200,230,255,.13)"; ctx.lineWidth=1; ctx.setLineDash([4,6]);
+  (graficaData.niveles||[]).forEach(n=>{
+    const yy=yp(n); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(w-padRight,yy); ctx.stroke();
+  });
   ctx.setLineDash([]);
 
-  // Rango ganador
-  ctx.strokeStyle="rgba(0,200,120,.35)"; ctx.lineWidth=1;
-  [rmin,rmax].forEach(n=>{ const yy=yp(Number(n)); ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(w,yy); ctx.stroke(); });
-
-  // Cuántos puntos dibujar (animación)
-  const drawCount=Math.max(1,Math.round(prog*puntos.length));
-  const valores=puntos.map(p=>Number(p.score_ganador||0));
-
-  // Curva principal con clip de animación
-  ctx.save(); ctx.beginPath(); ctx.rect(0,0,xp(drawCount-1)+espacioPuntos,h); ctx.clip();
-  ctx.strokeStyle="rgba(0,180,255,.95)"; ctx.lineWidth=2.5; ctx.beginPath();
-  puntos.slice(0,drawCount).forEach((p,i)=>{
-    const xx=xp(i), yy=yp(Number(p.score_ganador||0));
-    i===0?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
+  // ── Líneas de zona IQR reciente ───────────────────────────────────────────
+  [nzMin,nzMax].forEach(n=>{
+    const yy=yp(n); ctx.strokeStyle="rgba(0,200,120,.40)"; ctx.lineWidth=1;
+    ctx.setLineDash([5,5]); ctx.beginPath(); ctx.moveTo(fondoX,yy); ctx.lineTo(w-padRight,yy); ctx.stroke(); ctx.setLineDash([]);
   });
-  ctx.stroke();
 
-  // Moving Averages
+  // ── Separador calentamiento ───────────────────────────────────────────────
+  if(warmupX>0){
+    ctx.strokeStyle="rgba(200,200,80,.55)"; ctx.lineWidth=1.5; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(warmupX,padTop); ctx.lineTo(warmupX,h-padBottom); ctx.stroke(); ctx.setLineDash([]);
+    ctx.font="bold 9px monospace"; ctx.textAlign="left";
+    ctx.fillStyle="rgba(5,7,10,.75)"; ctx.fillRect(warmupX+2,padTop+1,88,14);
+    ctx.fillStyle="rgba(200,200,80,.90)"; ctx.fillText("◀ CALENTAM.",warmupX+4,padTop+12);
+  }
+
+  const drawCount=Math.max(1,Math.round(prog*puntos.length));
+  // valores = número ganador (0-99) para MAs
+  const valores=puntos.map(p=>Number(p.numero_int??parseInt(p.numero||"0")));
+
+  // ── Curva conectora de números ────────────────────────────────────────────
+  ctx.save(); ctx.beginPath(); ctx.rect(0,0,xp(drawCount-1)+espacioPuntos,h); ctx.clip();
+
+  // Tramo calentamiento (gris tenue)
+  if(warmupN>1&&drawCount>1){
+    ctx.strokeStyle="rgba(120,120,160,.35)"; ctx.lineWidth=1.5; ctx.beginPath();
+    puntos.slice(0,Math.min(warmupN+1,drawCount)).forEach((p,i)=>{
+      const xx=xp(i), yy=yp(valores[i]);
+      i===0?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
+    });
+    ctx.stroke();
+  }
+  // Tramo estable (azul)
+  if(drawCount>warmupN){
+    ctx.strokeStyle="rgba(0,180,255,.70)"; ctx.lineWidth=2; ctx.beginPath();
+    for(let i=warmupN;i<drawCount;i++){
+      const xx=xp(i), yy=yp(valores[i]);
+      i===warmupN?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
+    }
+    ctx.stroke();
+  }
+
+  // ── Moving Averages del NÚMERO ────────────────────────────────────────────
   function drawMA(ventana,color,dash){
     if(valores.length<ventana) return;
     const ma=calcMA(valores,ventana);
-    ctx.strokeStyle=color; ctx.lineWidth=1.5; ctx.setLineDash(dash||[]);
+    ctx.strokeStyle=color; ctx.lineWidth=2; ctx.setLineDash(dash||[]);
     ctx.beginPath(); let started=false;
     ma.slice(0,drawCount).forEach((v,i)=>{
       if(v==null) return;
@@ -1276,78 +2302,37 @@ function dibujarGrafica(prog){
     });
     ctx.stroke(); ctx.setLineDash([]);
   }
-  if(mostrarMAs.ma7)  drawMA(7,"rgba(255,200,0,.80)",[4,4]);
-  if(mostrarMAs.ma15) drawMA(15,"rgba(150,100,255,.75)",[6,4]);
-  if(mostrarMAs.ma30) drawMA(30,"rgba(0,230,140,.65)",[9,5]);
+  if(mostrarMAs.ma7)  drawMA(7,"rgba(255,200,0,.85)",[4,4]);
+  if(mostrarMAs.ma15) drawMA(15,"rgba(160,110,255,.80)",[6,4]);
+  if(mostrarMAs.ma30) drawMA(30,"rgba(0,230,140,.70)",[9,5]);
 
-  // Números ganadores sobre/bajo puntos
-  if(mostrarMAs.nums && drawCount>0){
+  // ── Etiquetas de número sobre cada punto ──────────────────────────────────
+  if(mostrarMAs.nums&&drawCount>0){
     ctx.font="bold 9px Arial"; ctx.textAlign="center";
+    const srmin=Number(graficaData.score_rango_min||0);
+    const srmax=Number(graficaData.score_rango_max||100);
     puntos.slice(0,drawCount).forEach((p,i)=>{
-      if(i%2!==0 && drawCount>30) return; // thin on dense charts
-      const sc=Number(p.score_ganador||0);
-      const xx=xp(i), yy=yp(sc);
-      const textY=sc>((maxY+minY)/2)?yy+14:yy-6;
-      ctx.fillStyle="rgba(180,210,255,.7)";
+      if(i<warmupN) return; // no labels en calentamiento
+      if(i%2!==0&&drawCount>40) return;
+      const nv=valores[i], xx=xp(i), yy=yp(nv);
+      const textY=nv>50?yy+13:yy-5;
+      ctx.fillStyle=numColor(Number(p.score_ganador||0),srmin,srmax,false);
       ctx.fillText(p.numero||"",xx,textY);
     });
   }
 
   ctx.restore();
 
-  // Línea vertical HOY
-  if(drawCount>=puntos.length&&puntos.length>0){
-    const hx=xp(puntos.length-1);
-    ctx.strokeStyle="rgba(255,255,255,.45)"; ctx.lineWidth=1.5; ctx.setLineDash([5,7]);
-    ctx.beginPath(); ctx.moveTo(hx,padTop); ctx.lineTo(hx,h-padBottom); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle="rgba(255,255,255,.8)"; ctx.font="11px monospace"; ctx.textAlign="left";
-    ctx.fillText("HOY",hx+5,padTop+11);
-  }
-
-  // Línea de tendencia + flecha
-  if(drawCount>=puntos.length&&puntos.length>1){
-    const lastIdx=puntos.length-1;
-    const hx=xp(lastIdx); const lastScore=Number(puntos[lastIdx].score_ganador||0);
-    const projScore=Number(graficaData.proyeccion_score||lastScore);
-    const x1=hx+espacioPuntos*1.4, y1=yp(lastScore);
-    const x2=hx+espacioPuntos*9;
-    let y2=yp(projScore);
-    const maxMove=usableH*0.28;
-    if(y2<y1-maxMove) y2=y1-maxMove;
-    if(y2>y1+maxMove) y2=y1+maxMove;
-    ctx.strokeStyle="rgba(180,100,255,.88)"; ctx.lineWidth=2; ctx.setLineDash([8,7]);
-    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); ctx.setLineDash([]);
-    const angle=Math.atan2(y2-y1,x2-x1), hl=11;
-    ctx.fillStyle="rgba(180,100,255,.95)"; ctx.beginPath(); ctx.moveTo(x2,y2);
-    ctx.lineTo(x2-hl*Math.cos(angle-Math.PI/6),y2-hl*Math.sin(angle-Math.PI/6));
-    ctx.lineTo(x2-hl*Math.cos(angle+Math.PI/6),y2-hl*Math.sin(angle+Math.PI/6));
-    ctx.closePath(); ctx.fill();
-    ctx.font="11px monospace"; ctx.textAlign="left";
-    const label="TEND "+( graficaData.tendencia||"");
-    const lx=x1+8, ly=y2<y1?y2-10:y2+18;
-    ctx.fillStyle="rgba(5,7,10,.72)"; ctx.fillRect(lx-4,ly-12,ctx.measureText(label).width+10,17);
-    ctx.fillStyle="rgba(220,180,255,.95)"; ctx.fillText(label,lx,ly);
-  }
-
-  // Brecha proyectada
-  if(drawCount>=puntos.length&&graficaData.brecha_min!=null){
-    const bmin=Number(graficaData.brecha_min||0), bmax=Number(graficaData.brecha_max||0);
-    const yTopB=yp(Math.max(bmin,bmax)), yBotB=yp(Math.min(bmin,bmax));
-    const startX=puntos.length>0?xp(puntos.length-1)+espacioPuntos:0;
-    ctx.fillStyle="rgba(180,100,255,.12)"; ctx.fillRect(startX,yTopB,Math.max(20,w-startX),Math.max(2,yBotB-yTopB));
-    ctx.strokeStyle="rgba(180,100,255,.38)"; ctx.lineWidth=1; ctx.setLineDash([4,6]);
-    ctx.beginPath(); ctx.moveTo(startX,yTopB); ctx.lineTo(w,yTopB); ctx.moveTo(startX,yBotB); ctx.lineTo(w,yBotB); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle="rgba(220,180,255,.95)"; ctx.font="11px monospace"; ctx.textAlign="left";
-    ctx.fillText("BRECHA "+bmin.toFixed(1)+"-"+bmax.toFixed(1),startX+5,Math.max(padTop+14,yTopB-6));
-  }
-
-  // Puntos coloreados
+  // ── Puntos coloreados ─────────────────────────────────────────────────────
+  const srmin=Number(graficaData.score_rango_min||0);
+  const srmax=Number(graficaData.score_rango_max||100);
   puntos.slice(0,drawCount).forEach((p,i)=>{
-    const sc=Number(p.score_ganador||0), xx=xp(i), yy=yp(sc);
-    let color=sc>rmax?"rgba(255,70,70,1)":sc<rmin?"rgba(255,200,0,1)":"rgba(0,200,120,1)";
-    if(p.pendiente_memoria) color="rgba(255,255,255,1)";
+    const nv=valores[i], xx=xp(i), yy=yp(nv);
+    const isWarmup=i<warmupN;
+    const sc=Number(p.score_ganador||0);
+    const color=p.pendiente_memoria?"rgba(255,255,255,1)":numColor(sc,srmin,srmax,isWarmup);
     ctx.fillStyle=color; ctx.beginPath();
-    const r=i===puntos.length-1?7:3.5;
+    const r=i===puntos.length-1?7:(isWarmup?2:3.5);
     ctx.arc(xx,yy,r,0,Math.PI*2); ctx.fill();
     if(i===puntos.length-1){
       ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.lineWidth=2;
@@ -1355,22 +2340,73 @@ function dibujarGrafica(prog){
     }
   });
 
-  // Eje X inferior
-  ctx.strokeStyle="rgba(200,230,255,.18)"; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.moveTo(0,h-padBottom); ctx.lineTo(w,h-padBottom); ctx.stroke();
+  // ── HOY + flecha proyección NÚMERO ───────────────────────────────────────
+  if(drawCount>=puntos.length&&puntos.length>0){
+    const hx=xp(puntos.length-1);
+    ctx.strokeStyle="rgba(255,255,255,.40)"; ctx.lineWidth=1.5; ctx.setLineDash([5,6]);
+    ctx.beginPath(); ctx.moveTo(hx,padTop); ctx.lineTo(hx,h-padBottom); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle="rgba(255,255,255,.8)"; ctx.font="11px monospace"; ctx.textAlign="left";
+    ctx.fillText("HOY",hx+5,padTop+11);
 
-  // Y axis labels
+    // Flecha proyección
+    const lastNum=valores[puntos.length-1];
+    const projNum=Number(graficaData.proyeccion_num??lastNum);
+    const x1=hx+espacioPuntos*1.5, y1=yp(lastNum);
+    const x2=hx+espacioPuntos*9;
+    let y2=yp(Math.max(0,Math.min(99,projNum)));
+    const maxMove=usableH*0.30;
+    if(y2<y1-maxMove) y2=y1-maxMove;
+    if(y2>y1+maxMove) y2=y1+maxMove;
+    ctx.strokeStyle="rgba(180,100,255,.90)"; ctx.lineWidth=2.5; ctx.setLineDash([8,6]);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); ctx.setLineDash([]);
+    const ang=Math.atan2(y2-y1,x2-x1), hl=11;
+    ctx.fillStyle="rgba(200,130,255,.95)"; ctx.beginPath(); ctx.moveTo(x2,y2);
+    ctx.lineTo(x2-hl*Math.cos(ang-Math.PI/6),y2-hl*Math.sin(ang-Math.PI/6));
+    ctx.lineTo(x2-hl*Math.cos(ang+Math.PI/6),y2-hl*Math.sin(ang+Math.PI/6));
+    ctx.closePath(); ctx.fill();
+    const label=`TEND ${graficaData.tendencia||""}  →${String(projNum).padStart(2,"0")}`;
+    const lx=x1+4, ly=y2<y1?y2-10:y2+18;
+    ctx.font="bold 11px monospace"; ctx.textAlign="left";
+    ctx.fillStyle="rgba(5,7,10,.75)"; ctx.fillRect(lx-3,ly-13,ctx.measureText(label).width+9,16);
+    ctx.fillStyle="rgba(220,180,255,.95)"; ctx.fillText(label,lx,ly);
+  }
+
+  // ── Candidatos IA: marcadores en borde derecho ────────────────────────────
+  if(drawCount>=puntos.length){
+    const cands=graficaData.candidatos_ia_nums||[];
+    const rx=w-padRight+4;
+    ctx.font="bold 10px monospace"; ctx.textAlign="left";
+    cands.slice(0,18).forEach((n,i)=>{
+      const yy=yp(n);
+      const alpha=Math.max(0.35,1-(i/18)*0.65);
+      // diamante
+      ctx.fillStyle=`rgba(0,212,255,${alpha})`;
+      ctx.beginPath(); ctx.moveTo(rx+7,yy); ctx.lineTo(rx+13,yy-5); ctx.lineTo(rx+19,yy); ctx.lineTo(rx+13,yy+5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle=`rgba(200,240,255,${alpha})`;
+      ctx.fillText(String(n).padStart(2,"0"),rx+22,yy+4);
+    });
+    // Etiqueta columna
+    ctx.fillStyle="rgba(0,212,255,.55)"; ctx.font="9px monospace"; ctx.textAlign="left";
+    ctx.fillText("IA▼",rx+4,padTop+10);
+  }
+
+  // ── Eje X inferior ────────────────────────────────────────────────────────
+  ctx.strokeStyle="rgba(200,230,255,.18)"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,h-padBottom); ctx.lineTo(w-padRight,h-padBottom); ctx.stroke();
+
+  // ── Y axis labels (0-99) ──────────────────────────────────────────────────
   yAxis.innerHTML="";
   (graficaData.niveles||[]).slice().reverse().forEach(n=>{
-    const yy=yp(Number(n)); const el=document.createElement("div");
+    const yy=yp(n); const el=document.createElement("div");
     el.style.cssText=`position:absolute;right:4px;top:${Math.max(0,yy-8)}px;font-size:10px;color:#4a7fa0;font-family:monospace;`;
-    el.textContent=String(n); yAxis.appendChild(el);
+    el.textContent=String(n).padStart(2,"0"); yAxis.appendChild(el);
   });
 
+  // ── Info bar ──────────────────────────────────────────────────────────────
   document.getElementById("grafica-info").textContent=
-    `${graficaData.total} puntos · sep:${espacioPuntos} · rango:${graficaData.rango_min}-${graficaData.rango_max} · tend:${graficaData.tendencia||""} · brecha:${graficaData.brecha_min||0}-${graficaData.brecha_max||0}`;
+    `${graficaData.total} sorteos · zona IQR30:${nzMin}-${nzMax} · tend:${graficaData.tendencia||""} · proy:${graficaData.proyeccion_num??""} · IA: ${(graficaData.candidatos_ia_nums||[]).length} candidatos`;
 
-  // Click/touch para tooltip
+  // ── Tooltip al tocar ──────────────────────────────────────────────────────
   canvas.onclick=function(ev){
     const rect=canvas.getBoundingClientRect();
     const scaleX=canvas.width/rect.width;
@@ -1379,11 +2415,14 @@ function dibujarGrafica(prog){
     puntos.forEach((p,i)=>{ const d=Math.abs(clickX-xp(i)); if(d<mejor){mejor=d;idx=i;} });
     const p=puntos[idx];
     const ma7v=calcMA(valores,7); const ma15v=calcMA(valores,15); const ma30v=calcMA(valores,30);
+    const sc=Number(p.score_ganador||0);
+    const mov=idx>0?`(${valores[idx]-valores[idx-1]>0?"+":""}${valores[idx]-valores[idx-1]})`: "";
+    const enRango=(sc>=srmin&&sc<=srmax)?"✅ en rango IA":(sc<srmin?"🟡 frío":"🔴 quemado");
     document.getElementById("grafica-tip").textContent=
-      `📅 ${p.fecha}  🎯 Nro: ${p.numero}  📊 Score: ${p.score_ganador}  🏁 Rank: ${p.rank_ganador}`+
-      `\nMA7: ${ma7v[idx]?.toFixed(2)||"—"}  MA15: ${ma15v[idx]?.toFixed(2)||"—"}  MA30: ${ma30v[idx]?.toFixed(2)||"—"}`+
-      `\nTendencia: ${graficaData.tendencia||""}  Brecha: ${graficaData.brecha_min||0}-${graficaData.brecha_max||0}`+
-      (p.pendiente_memoria?"\n⚡ Punto nuevo (pendiente reaprender)":"");
+      `📅 ${p.fecha}  🎯 Número: ${p.numero} ${mov}  🏁 Rank: ${p.rank_ganador}`+
+      `\n📊 Score: ${p.score_ganador}  ${enRango}`+
+      `\nMA7-num: ${ma7v[idx]?.toFixed(1)||"—"}  MA15: ${ma15v[idx]?.toFixed(1)||"—"}  MA30: ${ma30v[idx]?.toFixed(1)||"—"}`+
+      (p.pendiente_memoria?"\n⚡ Nuevo (pendiente reaprender)":"");
   };
 }
 
@@ -1421,7 +2460,23 @@ function cerrar(){
 
 // Poll background
 setInterval(()=>{ if(pollCarga) pollearCarga(); if(pollAp) pollearAp(); },4000);
+
+// ── Zoom global de la app ────────────────────────────────────────────────
+let appZoom=parseFloat(localStorage.getItem('appZoom')||'1.0');
+function applyZoom(){
+  const w=document.getElementById('app-wrapper');
+  w.style.transform=`scale(${appZoom})`;
+  w.style.width=`${(100/appZoom).toFixed(1)}%`;
+  document.getElementById('zoom-label').textContent=Math.round(appZoom*100)+'%';
+  localStorage.setItem('appZoom',appZoom);
+}
+function cambiarZoom(d){
+  appZoom=Math.max(0.6,Math.min(2.5,Math.round((appZoom+d)*10)/10));
+  applyZoom();
+}
+applyZoom();
 </script>
+</div><!-- /app-wrapper -->
 </body>
 </html>"""
 
